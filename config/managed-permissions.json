@@ -1,0 +1,16 @@
+{
+  "$comment": [
+    "Permission rules the kit has SHIPPED in the past and has since removed. On a layer-in-place upgrade, install.sh offers to retire any of these still present in a profile (default: drop = adopt the updated set), while leaving rules the kit never shipped (the user's own) untouched.",
+    "Maintenance contract: whenever you delete or change a deny/allow rule in settings.base.json or rtk-allowlist.json, append the OLD string here so existing profiles can drop it on their next upgrade. Never remove entries from this list — it is the kit's permission-rule history."
+  ],
+  "retired": {
+    "deny": [
+      "Read(**/.env.*)",
+      "Read(~/.config/git/**)",
+      "Read(~/.gcloud/**)",
+      "Read(~/.npm/**)"
+    ],
+    "allow": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,54 @@
+---
+description: End-of-session handoff — summarize, verify, and stage so you can review and commit.
+---
+
+# /wrap-up
+
+Leave the working tree clean and ready for **you** to review and commit.
+**Prepare; do not commit, merge, or push** unless explicitly asked. Work
+top-to-bottom; skip steps that don't apply.
+
+0. **Defer to the repo.** If this project's `CLAUDE.md` / `AGENTS.md` defines a
+   session-end or wrap-up process, follow *that* instead of the generic steps below.
+
+1. **Establish context — this repo may not be yours alone.** Note the current
+   branch, worktree (`git worktree list` if several), and upstream sync state
+   (`git status -sb` ahead/behind). If a rebase / merge / cherry-pick is in
+   progress, **stop and report** — never wrap up over someone's in-flight
+   operation. If the index already holds staged changes this session didn't
+   make, **leave them exactly as they are and say so** — another session or the
+   developer may own them.
+
+2. **Survey the session.** Run `git status` and `git diff --stat` (plus `git diff`
+   for anything non-trivial). Summarize what changed and why in 2–4 sentences.
+
+3. **Verify.** Run the checks the repo's conventions define, or the obvious
+   project tests / linters / build. When the full suite is expensive, scope to
+   what this session touched. Report real results — never assert "should work."
+   **If something fails, stop and report it** rather than staging a broken
+   change (unless the user says to proceed).
+
+4. **Stage intentionally — or just propose.** Stage only the files this session
+   changed, by name (never a blind `git add -A`). Before staging, scan the diff
+   for **secrets / credentials / `.env`**, build artifacts, large files, and
+   anything unrelated; leave those out and flag them. If a file mixes this
+   session's work with unrelated or someone else's edits, **don't stage it** —
+   list the exact `git add` commands instead and let the developer stage
+   selectively.
+
+5. **Draft the commit — don't run it.** Propose a clear, conventional message
+   (`fix:` / `feat:` / `docs:` / `refactor:` …) describing the change, not the
+   process. If the work is several unrelated changes, propose splitting it into
+   atomic commits. If you're on `main`/`master` or a protected branch in a repo
+   that works by branches/PRs, **propose a feature-branch name to move the work
+   to — don't create it**. Then let the developer review the diff and commit —
+   only commit yourself if they explicitly ask.
+
+6. **Docs.** Only if the repo's conventions call for it (or the user asked),
+   update the changelog / README. Don't invent ceremony the repo doesn't
+   already use.
+
+7. **Surface loose ends.** List anything unfinished, any follow-up work, and any
+   decision that still needs a human, so the next session can pick up cold.
+
+Never merge. Never push.

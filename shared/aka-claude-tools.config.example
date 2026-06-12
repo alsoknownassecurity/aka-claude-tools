@@ -1,0 +1,29 @@
+# aka-claude-tools.config — OPT-IN org-specific settings, sourced by aka-claude-tools hooks.
+#
+# Copy this to the root of your Claude config dir as `aka-claude-tools.config`
+# (e.g. ~/.claude-aka/aka-claude-tools.config) and uncomment what you need.
+# The installer can place a copy for you. NOTHING here ships by default —
+# every value below is empty unless YOU set it.
+#
+# This is a shell file: `KEY="value"` syntax, sourced by bash. No secrets here —
+# these are *patterns to block*, not credentials.
+
+# ── leak-guard.sh (Tier 2) ─────────────────────────────────────────
+# A single extended-regex (ERE) of internal identifiers that must never leave in
+# a web search/fetch query or an outbound shell command (curl/wget/…): tailnet
+# domains, internal IP ranges, VCS usernames, absolute home paths, project
+# codenames. Pipe-separate alternatives.
+#
+# Example:
+#   CT_EGRESS_PATTERNS='example-corp\.internal|10\.42\.[0-9]+\.[0-9]+|/Users/jdoe/|acme-vcs-user'
+CT_EGRESS_PATTERNS=""
+
+# ── harness-pointer.sh ───────────────────────────────────────────────────────
+# Pipe-separated list of command names (matched as the first word) to block,
+# plus the hint shown to the agent when one is blocked. Empty = no-op.
+#
+# Example (team uses a self-hosted VCS, wants to steer away from the GitHub CLI):
+#   CT_BLOCKED_CMDS="gh"
+#   CT_BLOCKED_HINT="Use plain git — this team's remote is self-hosted, not GitHub."
+CT_BLOCKED_CMDS=""
+CT_BLOCKED_HINT="This command is blocked by your team's aka-claude-tools harness-pointer."

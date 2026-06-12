@@ -1,0 +1,15 @@
+# Local, machine-, or user-specific — never commit
+aka-claude-tools.config
+claude-tools.config
+*.local
+.DS_Store
+
+# Editor noise
+.idea/
+.vscode/
+*.swp
+
+# Never let a real config folder or secrets land in the repo
+.claude-*/
+.env
+.credentials.json

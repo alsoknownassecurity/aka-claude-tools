@@ -1,0 +1,59 @@
+{
+  "$comment": [
+    "Maintainer notes — stripped from the merged settings.json by install.sh; never shipped to a user's config.",
+    "Credential-read denies and telemetry/env defaults are conventional security defaults; they were cross-referenced against trailofbits/claude-code-config.",
+    "Shell-rc Edit/Write denies block the Edit/Write TOOLS (the visible, approvable path) and stop Claude from managing your dotfiles (hand those off via `! <cmd>`). They do NOT cover a Bash redirection like `echo ... >> ~/.zshrc` — that is a separate, unguarded path. Kept as a cheap defense against a persistence vector; drop them if you want Claude editing your rc files."
+  ],
+  "env": {
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1"
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "enableAllProjectMcpServers": false,
+  "permissions": {
+    "deny": [
+      "Edit(~/.bash_profile)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.profile)",
+      "Edit(~/.ssh/**)",
+      "Edit(~/.zprofile)",
+      "Edit(~/.zshenv)",
+      "Edit(~/.zshrc)",
+      "Read(**/.env)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.local)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.electrum/**)",
+      "Read(~/.ethereum/**)",
+      "Read(~/.gem/credentials)",
+      "Read(~/.git-credentials)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)",
+      "Read(~/.pypirc)",
+      "Read(~/.ssh/**)",
+      "Read(~/Library/Application Support/**/metamask*/**)",
+      "Read(~/Library/Application Support/**/phantom*/**)",
+      "Read(~/Library/Application Support/**/solflare*/**)",
+      "Read(~/Library/Application Support/Electrum/**)",
+      "Read(~/Library/Application Support/Exodus/**)",
+      "Read(~/Library/Ethereum/**)",
+      "Read(~/Library/Keychains/**)",
+      "Write(~/.bash_profile)",
+      "Write(~/.bashrc)",
+      "Write(~/.profile)",
+      "Write(~/.zprofile)",
+      "Write(~/.zshenv)",
+      "Write(~/.zshrc)"
+    ]
+  }
+}

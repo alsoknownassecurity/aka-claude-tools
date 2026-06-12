@@ -1,0 +1,82 @@
+{
+  "$comment": "Catalog of selectable aka-claude-tools additions. Drives the installer menu and documents the payload. 'recommended' additions are pre-selected at the install prompt.",
+  "additions": [
+    {
+      "id": "secure-settings",
+      "name": "Secure base settings",
+      "prompt": "Secure base settings (deny credential reads, telemetry off)?",
+      "recommended": true,
+      "description": "Deny-reads on credential paths (~/.ssh, ~/.aws, .env, keychains, …) and disables nonessential telemetry/feedback traffic. Always safe to layer on.",
+      "settings": "settings.base.json"
+    },
+    {
+      "id": "leak-guard",
+      "name": "Web egress sanitizer",
+      "prompt": "Web egress sanitizer (block secrets in web queries)?",
+      "recommended": true,
+      "description": "PreToolUse guard on WebSearch/WebFetch, plus outbound Bash commands (fast-gated: only commands containing curl/wget/nc/… are scanned, ~98% of Bash calls pay ~0 ms). Blocks queries/commands containing detected secrets (trufflehog), token/SSH-key shapes, and — if configured — your org's internal identifiers.",
+      "hook": "hooks/leak-guard.sh",
+      "matcher": "WebSearch|WebFetch + Bash (gated)",
+      "event": "PreToolUse",
+      "usesConfig": true
+    },
+    {
+      "id": "command-guard",
+      "name": "command-guard (Bash exfil guard)",
+      "prompt": "command-guard — block credential exfil + curl|bash in Bash [bun]?",
+      "recommended": true,
+      "description": "PreToolUse guard on Bash. denies credential exfil (key shape + outbound tool) and pipe-to-shell (curl | bash); alerts on nc/socat/sendmail/env-dump/inline-interpreter. Requires bun; skipped at install if bun is absent.",
+      "hook": "hooks/command-guard.ts",
+      "matcher": "Bash",
+      "event": "PreToolUse",
+      "requires": "bun"
+    },
+    {
+      "id": "rtk-safe",
+      "name": "RTK command rewriting",
+      "prompt": "RTK command rewriting — token-saving compact output [needs rtk]?",
+      "recommended": true,
+      "description": "PreToolUse rewrite on Bash. transparently rewrites git/gh/cat/ls/find/npm/docker/etc. to compact `rtk` equivalents for token savings. Self-skips at runtime if rtk/jq are absent, so it's inert until you install rtk. Also installs a strictly read-only rtk allowlist (rtk-allowlist.json) so rewritten read commands don't add prompt friction; mutating/egress forms still prompt.",
+      "hook": "hooks/rtk-safe.hook.sh",
+      "settings": "rtk-allowlist.json",
+      "matcher": "Bash",
+      "event": "PreToolUse",
+      "requires": "rtk"
+    },
+    {
+      "id": "statusline",
+      "name": "Responsive status line",
+      "prompt": "Responsive status line?",
+      "recommended": true,
+      "description": "Width-adaptive status line (git, context, usage). Resolves its own config dir, so it works in any isolated config folder.",
+      "statusLine": "hooks/statusline.sh"
+    },
+    {
+      "id": "wrap-up",
+      "name": "/wrap-up command",
+      "prompt": "/wrap-up command?",
+      "recommended": true,
+      "description": "Repo-agnostic end-of-session handoff that PREPARES, never executes: summarize, verify (stop on failure), stage intentionally with a secret/artifact scan (or just propose the git add commands), draft a conventional commit message. Multi-user aware: leaves others' staged changes alone, stops over in-progress rebases, proposes a feature branch instead of working on main. Never commits, merges, or pushes unless explicitly asked.",
+      "command": "commands/wrap-up.md"
+    },
+    {
+      "id": "loop-designer",
+      "name": "loop-designer skill",
+      "prompt": "loop-designer skill (compile a spec into a minimal autonomous-run prompt)?",
+      "recommended": true,
+      "description": "Skill that compiles a finished spec/plan (any doc with verifiable criteria, constraints, and human gates) into the smallest kickoff prompt that runs it well in a fresh orchestrator session — must-have discipline core + an evidence-based catalog of opt-in guardrails distilled from real multi-hour autonomous runs. Includes a Harden mode that slims hand-written kickoff prompts. Pure prompt/skill files — no hooks, no runtime cost.",
+      "skill": "skills/loop-designer"
+    },
+    {
+      "id": "harness-pointer",
+      "name": "Harness pointer (opt-in)",
+      "prompt": "Harness pointer (opt-in, ships disabled+empty)?",
+      "recommended": false,
+      "description": "PreToolUse guard on Bash that intercepts org-configured commands and points the agent to the right approach for your environment (e.g. gh -> git). Guidance, not a security boundary. Ships OFF and empty — most engineers want every CLI. Enable + configure via aka-claude-tools.config.",
+      "hook": "hooks/harness-pointer.sh",
+      "matcher": "Bash",
+      "event": "PreToolUse",
+      "usesConfig": true
+    }
+  ]
+}
