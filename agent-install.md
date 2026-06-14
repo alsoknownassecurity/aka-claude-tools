@@ -122,6 +122,11 @@ the user's go-ahead.
   the profile's `permissions.allow` (union, never replace). It contains only
   strictly read-only `rtk` forms; do NOT widen it to `Bash(rtk:*)` — rtk fronts
   curl/aws/psql/docker, so a blanket prefix is effectively a general Bash allow.
+- **Startup-write guard (if selected):** a plain `hooks.PreToolUse` Bash
+  registration of `<dir>/hooks/startup-write-guard.sh` — no special handling.
+- **Shell-audit skill (if selected):** copied as a skill dir (per the skills rule
+  above); also `chmod +x <dir>/skills/shell-audit/audit.sh` so the skill can run
+  the bundled auditor.
 - **Statusline location (if the statusline is enabled):** offer to pin an exact
   location for weather (default: auto-detect by IP, city-level). Make clear that
   nothing is saved or collected — if they give a city/address, geocode it once

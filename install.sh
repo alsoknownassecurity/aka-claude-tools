@@ -575,6 +575,16 @@ setup_one_config() {
     place_dir "$CONFIG_SRC/skills/loop-designer" "$config_dir/skills"
     ok "Placed loop-designer skill"
   fi
+  if is_selected shell-audit "$_sel_ids"; then
+    place_dir "$CONFIG_SRC/skills/shell-audit" "$config_dir/skills"
+    chmod +x "$config_dir/skills/shell-audit/audit.sh" 2>/dev/null || true
+    ok "Placed shell-audit skill"
+  fi
+  if is_selected startup-write-guard "$_sel_ids"; then
+    place_file "$CONFIG_SRC/hooks/startup-write-guard.sh" "$config_dir/hooks" +x
+    add="$(jq --arg cmd "$config_dir/hooks/startup-write-guard.sh" \
+      '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
+  fi
 
   # 4c. opt-in config template if any config-driven hook was selected
   if { is_selected leak-guard "$_sel_ids" || is_selected harness-pointer "$_sel_ids"; } && [ ! -f "$config_dir/aka-claude-tools.config" ]; then
