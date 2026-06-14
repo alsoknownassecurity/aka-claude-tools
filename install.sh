@@ -13,7 +13,11 @@
 #     alias aka='CLAUDE_CONFIG_DIR="$HOME/.claude-aka" claude'
 #
 # Re-run any time to add another config folder. Idempotent: re-running for the
-# same folder/alias updates in place instead of duplicating.
+# same folder/alias updates in place instead of duplicating. Idempotent BOTH
+# ways: unchecking an addition you previously installed UNINSTALLS it — its
+# hook/command/skill files and its settings contributions (hook registrations,
+# statusLine, and the permission/env rules it shipped) are removed. Your own
+# rules, hooks, and files are never touched.
 #
 # The target can also be the DEFAULT ~/.claude: the installer offers to move it
 # to a timestamped backup, rebuild it clean with the selected additions, and
@@ -142,6 +146,77 @@ idxs_to_subarray() {
   [ -z "$idxs" ] && { printf '[]'; return; }
   local jqidx; jqidx="$(printf '%s\n' $idxs | jq -s 'map(. - 1)')"
   jq -cn --argjson a "$arr" --argjson i "$jqidx" '[ $i[] as $k | $a[$k] ]'
+}
+
+# ── uninstall a deselected addition ──────────────────────────────────────────
+# A plain merge only ADDS, so unchecking an addition on a re-run used to leave
+# its files and settings behind forever. These helpers remove exactly what an
+# addition contributed — driven by config/additions.json (.hook/.command/.skill/
+# .settings/.statusLine) so they can't drift from the install logic. All are
+# idempotent: pruning something already absent is a no-op.
+
+# Remove every settings hook registration whose command references basename $1,
+# then drop any event left empty. Kit hooks are matched by their unique file
+# name, so a user's own hooks (different command) are never touched.
+prune_hook_regs() {
+  jq --arg b "$1" '
+    if (.hooks|type)=="object" then
+      (.hooks |= ( to_entries
+        | map(.value |= map(select(((.hooks // []) | map(.command // "") | any(contains($b))) | not)))
+        | map(select((.value|type)=="array" and (.value|length) > 0))
+        | from_entries ))
+      | (if (.hooks // {}) == {} then del(.hooks) else . end)
+    else . end'
+}
+
+# Drop .statusLine if its command references basename $1.
+prune_statusline() {
+  jq --arg b "$1" 'if ((.statusLine.command // "") | contains($b)) then del(.statusLine) else . end'
+}
+
+# Subtract an addition's shipped permission arrays + env keys (read from its
+# payload file $1) from the settings on stdin. Set-difference on permission
+# arrays and key-removal on env — only the exact rules the kit shipped go; any
+# the user also keeps elsewhere in their own rules are unaffected (the kit rule
+# is a duplicate the union would re-add anyway).
+prune_perms_env() {
+  local p; p="$(jq -c '{permissions: (.permissions // {}), env: (.env // {})}' "$1" 2>/dev/null || printf '{}')"
+  jq --argjson p "$p" '
+    ( if (.permissions|type)=="object" then
+        reduce ("allow","deny","ask") as $k (.;
+          if (.permissions[$k]?) and ($p.permissions[$k]?) then
+            (.permissions[$k] = (.permissions[$k] - $p.permissions[$k]))
+            | (if (.permissions[$k]|length) == 0 then del(.permissions[$k]) else . end)
+          else . end)
+        | (if (.permissions // {}) == {} then del(.permissions) else . end)
+      else . end )
+    | ( if (.env|type)=="object" then
+          (.env |= with_entries(select((.key) as $k | ($p.env | has($k)) | not)))
+          | (if (.env // {}) == {} then del(.env) else . end)
+        else . end )'
+}
+
+# addition_owned_paths <id> <config_dir> → echo the files/dirs the addition owns.
+addition_owned_paths() {
+  local id="$1" cfg="$2" key rel
+  for key in hook command statusLine skill; do
+    rel="$(jq -r --arg i "$id" --arg k "$key" '.additions[] | select(.id==$i) | .[$k] // ""' "$CONFIG_SRC/additions.json")"
+    [ -n "$rel" ] && echo "$cfg/$rel"
+  done
+}
+
+# prune_addition_from_settings <id>  (settings json on stdin → pruned on stdout)
+# Applies the relevant prunes for one addition based on its additions.json entry.
+prune_addition_from_settings() {
+  local id="$1" s hook sline setf
+  s="$(cat)"
+  hook="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .hook // ""'       "$CONFIG_SRC/additions.json")"
+  sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
+  setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
+  [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
+  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(basename "$sline")")"
+  [ -n "$setf" ] && [ -f "$CONFIG_SRC/$setf" ] && s="$(printf '%s' "$s" | prune_perms_env "$CONFIG_SRC/$setf")"
+  printf '%s' "$s"
 }
 
 # ── managed-permission reconciliation ────────────────────────────────────────
@@ -643,6 +718,27 @@ setup_one_config() {
   # 4d. merge settings (existing-in-dir ∪ additions) and write
   local existing='{}'
   [ -f "$config_dir/settings.json" ] && existing="$(cat "$config_dir/settings.json")"
+
+  # 4d-pre. Uninstall deselected additions. Unchecking an addition you had
+  # before now REMOVES it: its hook/command/skill files are deleted and its
+  # settings contributions (hook registrations, statusLine, shipped permission/
+  # env rules) are pruned from `existing` before the merge re-adds the selected
+  # ones. Driven by config/additions.json; idempotent (no-op for anything not
+  # actually present), so it's safe to run for every unselected id.
+  local _uid _p _changed
+  for _uid in $(jq -r '.additions[].id' "$CONFIG_SRC/additions.json"); do
+    is_selected "$_uid" "$_sel_ids" && continue
+    _changed=0
+    while IFS= read -r _p; do
+      [ -n "$_p" ] && [ -e "$_p" ] && { rm -rf "$_p"; _changed=1; }
+    done < <(addition_owned_paths "$_uid" "$config_dir")
+    if [ "$existing" != "{}" ]; then
+      local _pruned; _pruned="$(printf '%s' "$existing" | prune_addition_from_settings "$_uid")"
+      [ -n "$_pruned" ] && [ "$_pruned" != "$existing" ] && { existing="$_pruned"; _changed=1; }
+    fi
+    [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
+  done
+
   # Reconcile kit-managed permission rules first: a plain merge only UNIONS, so it
   # can add new denies/allows but never drop ones the kit has retired. This shows
   # the engineer the per-rule diff and lets them choose (default: adopt this
