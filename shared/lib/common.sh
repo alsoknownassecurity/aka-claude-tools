@@ -228,3 +228,71 @@ write_managed_block() {
   printf '%s\n%s\n%s\n' "$begin" "$content" "$end" >> "$tmp"
   mv "$tmp" "$file"
 }
+
+# remove_managed_block FILE ID — delete our marker-delimited block if present.
+# Returns 0 if it removed one, 1 if there was none. Used to drop a now-redundant
+# alias block when the same alias is already provided elsewhere.
+remove_managed_block() {
+  local file="$1" id="$2"
+  local begin="# >>> aka-claude-tools managed: ${id} >>>"
+  local end="# <<< aka-claude-tools managed: ${id} <<<"
+  [ -f "$file" ] || return 1
+  grep -qF "$begin" "$file" || return 1
+  local tmp; tmp="$(mktemp)"
+  awk -v b="$begin" -v e="$end" '$0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# sourced_paths FILE — print the existing files FILE `source`s / `.`-includes
+# (one hop), with ~ / $HOME / $ZDOTDIR expanded. Best-effort, no eval; relative
+# or var-built paths that don't expand here are skipped.
+sourced_paths() {
+  local src="$1" f
+  [ -f "$src" ] || return 0
+  while IFS= read -r f; do
+    f="${f%%#*}"; f="${f%"${f##*[![:space:]]}"}"
+    f="${f/#\~/$HOME}"; f="${f//\$HOME/$HOME}"; f="${f//\$\{HOME\}/$HOME}"
+    f="${f//\$ZDOTDIR/${ZDOTDIR:-$HOME}}"; f="${f//\$\{ZDOTDIR\}/${ZDOTDIR:-$HOME}}"
+    [ -n "$f" ] && [ -f "$f" ] && printf '%s\n' "$f"
+  done < <(grep -hE '^[[:space:]]*(source|\.)[[:space:]]+' "$src" 2>/dev/null | sed -E 's/^[[:space:]]*(source|\.)[[:space:]]+//')
+}
+
+# alias_target_elsewhere NAME RC — if alias NAME is already defined OUTSIDE our
+# own managed block — in RC or ANY file reachable through its `source` chain
+# (fully recursive) — print the CLAUDE_CONFIG_DIR it resolves to (expanded), or
+# "OTHER" if it's an alias of that name that isn't a Claude-config launcher.
+# Empty = not defined in that scope. Lets the installer avoid duplicating or
+# shadowing an alias the user already has (e.g. one a fleet-wide aliases file
+# provides). Walks the WHOLE source graph with a visited-set, so a source cycle
+# (A sources B sources A, or self-source) can't loop and each file is scanned
+# once — cost is O(distinct files), a handful in any real rc.
+alias_target_elsewhere() {
+  local name="$1" rc="$2"
+  [ -f "$rc" ] || return 0
+  local begin="# >>> aka-claude-tools managed: ${name} >>>"
+  local end="# <<< aka-claude-tools managed: ${name} <<<"
+  local stripped; stripped="$(mktemp)"
+  # RC with our own block removed, so we only see OTHER definitions.
+  awk -v b="$begin" -v e="$end" '$0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}' "$rc" > "$stripped"
+  # Breadth-first over the source graph. queue = files to expand; seen = files
+  # already expanded (cycle/repeat guard, space-delimited); files = what to grep
+  # (rc represented by its stripped copy). Index walk — no array slicing, so it's
+  # safe under set -u on old bash.
+  local files=("$stripped") queue=("$rc") seen=" " cur kid i=0
+  while [ "$i" -lt "${#queue[@]}" ]; do
+    cur="${queue[$i]}"; i=$((i + 1))
+    case "$seen" in *" $cur "*) continue ;; esac
+    seen="$seen$cur "
+    while IFS= read -r kid; do
+      case "$seen" in *" $kid "*) continue ;; esac
+      files+=("$kid"); queue+=("$kid")
+    done < <(sourced_paths "$cur")
+  done
+  local def; def="$(grep -hE "^[[:space:]]*alias[[:space:]]+${name}=" "${files[@]}" 2>/dev/null | tail -1)"
+  rm -f "$stripped"
+  [ -z "$def" ] && return 0
+  local t; t="$(printf '%s\n' "$def" | sed -n 's/.*CLAUDE_CONFIG_DIR=//p' | sed "s/^[\"']//; s/[\"'].*$//")"
+  if [ -z "$t" ]; then printf 'OTHER\n'; return 0; fi
+  t="${t/#\~/$HOME}"; t="${t//\$HOME/$HOME}"; t="${t//\$\{HOME\}/$HOME}"
+  printf '%s\n' "$t"
+}

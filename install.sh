@@ -615,9 +615,42 @@ setup_one_config() {
     say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
   else
     local rc; rc="$(detect_shell_rc)"
-    write_managed_block "$rc" "$alias_name" \
+    # Review existing aliases before inserting ours — check the rc and every file
+    # reachable through its `source` chain (fully recursive, cycle-safe), so we
+    # never silently duplicate or shadow an alias the user already has (e.g. one a
+    # fleet-wide aliases file provides). See alias_target_elsewhere in common.sh;
+    # the agent-install path does the same review and adds judgment on edge cases.
+    local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
+    if [ "$prior" = "$config_dir" ]; then
+      # Already resolves to THIS profile from elsewhere → don't add a duplicate;
+      # drop any stale managed block of ours so there's a single definition.
+      if remove_managed_block "$rc" "$alias_name"; then
+        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — removed our now-redundant block."
+      else
+        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — not adding a duplicate."
+      fi
+    elif [ -n "$prior" ]; then
+      if [ "$prior" = "OTHER" ]; then
+        warn "'${alias_name}' is already an alias in your shell (not a Claude-config launcher)."
+      else
+        warn "Alias '${alias_name}' already exists and points to: ${prior}"
+        say  "  ${C_DIM}(from your shell rc or a file it sources — not this profile).${C_RST}"
+      fi
+      local newalias=""
+      prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
+      if [ -n "$newalias" ]; then
+        write_managed_block "$rc" "$newalias" \
+"alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+        alias_name="$newalias"
+        ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+      else
+        say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
+      fi
+    else
+      write_managed_block "$rc" "$alias_name" \
 "alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-    ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+      ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+    fi
 
     say ""
     ok "Config '${alias_name}' ready."
