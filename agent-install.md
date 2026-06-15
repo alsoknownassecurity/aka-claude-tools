@@ -33,10 +33,13 @@ don't specify one:
 - Which **additions** to layer on (read `config/additions.json` in this repo for
   the catalog + recommended defaults): secure base settings, web-egress
   sanitizer, command-guard (needs `bun`), RTK command rewriting (inert until
-  `rtk` is installed), status line, `/wrap-up`, the loop-designer skill, and the
-  opt-in harness-pointer. Additions with a `skill` field are **directory copies**:
-  copy the whole directory into `<dir>/skills/` (replace any existing copy so
-  re-installs don't leave stale files).
+  `rtk` is installed), status line, `/wrap-up`, the loop-designer skill, the
+  secure-deep-research workflow, and the opt-in harness-pointer. Additions with a
+  `skill` field are **directory copies**: copy the whole directory into
+  `<dir>/skills/` (replace any existing copy so re-installs don't leave stale
+  files). Additions with a `workflow` field are **file copies** into
+  `<dir>/workflows/` — a `.js` there auto-registers as both the named workflow and
+  its matching slash-command skill (Claude Code scans `<dir>/workflows/`).
 
 ## 2. Scan the existing config thoroughly
 
@@ -47,7 +50,7 @@ if set) and inventory what's migratable — **this is where you beat the script*
   and any **absolute paths** that will break under a new config dir.
 - `.mcp.json` / MCP servers in settings — note any that reference local paths,
   binaries, or need their own auth.
-- `agents/`, `skills/`, `commands/`, `output-styles/`, `hooks/` — list items.
+- `agents/`, `skills/`, `commands/`, `output-styles/`, `hooks/`, `workflows/` — list items.
 - `CLAUDE.md` **and any `@`-imports it references** — an import pointing outside
   the migrated set will dangle.
 - `keybindings.json`, `plugins/` + `enabledPlugins`.
