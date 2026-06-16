@@ -28,12 +28,27 @@ set -o pipefail
 CFG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS_FILE="${CFG_DIR}/settings.json"
 
-# Per-config cache key so multiple config folders don't collide in /tmp.
+# Secure per-user cache dir. We `source` some of these files (settings cache,
+# parallel-prefetch fragments) and interpolate others into sourced shell, so a
+# world-writable, predictably-named path under /tmp is a local code-exec vector
+# on shared hosts/CI: an attacker pre-creates the file with a fresh mtime and we
+# run it as the user on the next refresh. Prefer a per-user base ($XDG_RUNTIME_DIR
+# on systemd Linux, $TMPDIR on macOS — both already 0700 and per-user) over bare
+# /tmp, create the dir 0700, and if it isn't owned by us (someone pre-created it)
+# fall back to a private mktemp dir so we never read attacker-controlled files.
+_CACHE_BASE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+CACHE_DIR="${_CACHE_BASE%/}/aka-claude-tools-${USER:-anon}"
+if ! mkdir -p "$CACHE_DIR" 2>/dev/null || [ ! -O "$CACHE_DIR" ]; then
+    CACHE_DIR="$(mktemp -d 2>/dev/null)" || CACHE_DIR="/tmp"
+fi
+chmod 700 "$CACHE_DIR" 2>/dev/null || true
+
+# Per-config cache key so multiple config folders don't collide.
 _CFG_KEY="$(printf '%s' "$CFG_DIR" | tr -c 'A-Za-z0-9' '_')"
-LOCATION_CACHE="/tmp/aka-claude-tools-location-${USER:-anon}-${_CFG_KEY}.json"
-WEATHER_CACHE="/tmp/aka-claude-tools-weather-${USER:-anon}-${_CFG_KEY}.txt"
-USAGE_CACHE="/tmp/aka-claude-tools-usage-${USER:-anon}-${_CFG_KEY}.json"
-_SETTINGS_CACHE="/tmp/aka-claude-tools-settings-${USER:-anon}-${_CFG_KEY}.sh"
+LOCATION_CACHE="${CACHE_DIR}/location-${_CFG_KEY}.json"
+WEATHER_CACHE="${CACHE_DIR}/weather-${_CFG_KEY}.txt"
+USAGE_CACHE="${CACHE_DIR}/usage-${_CFG_KEY}.json"
+_SETTINGS_CACHE="${CACHE_DIR}/settings-${_CFG_KEY}.sh"
 
 LOCATION_CACHE_TTL=3600
 WEATHER_CACHE_TTL=900
@@ -107,7 +122,7 @@ total_input=${total_input:-0}
 has_native_rate_limits="${has_native_rate_limits:-false}"
 
 # CC version: prefer JSON input, fall back to cached claude --version output
-_CC_VERSION_CACHE="/tmp/aka-claude-tools-version-${USER:-anon}.txt"
+_CC_VERSION_CACHE="${CACHE_DIR}/version.txt"
 if [ -n "$cc_version_json" ] && [ "$cc_version_json" != "unknown" ]; then
     cc_version="$cc_version_json"
 elif [ -f "$_CC_VERSION_CACHE" ] && [ -z "$(find "$_CC_VERSION_CACHE" -mtime +1 2>/dev/null)" ]; then
@@ -163,7 +178,7 @@ fi
 # TERMINAL WIDTH DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-_width_cache="/tmp/aka-claude-tools-width-${KITTY_WINDOW_ID:-default}"
+_width_cache="${CACHE_DIR}/width-${KITTY_WINDOW_ID:-default}"
 
 detect_terminal_width() {
     # Claude Code sets COLUMNS for the statusline process, and tput/stty are
@@ -275,8 +290,9 @@ reset_time_str() {
 # PARALLEL PREFETCH
 # ─────────────────────────────────────────────────────────────────────────────
 
-_parallel_tmp="/tmp/aka-claude-tools-parallel-$$"
-mkdir -p "$_parallel_tmp"
+# Exclusively-created, unpredictably-named per-run dir: its fragments are sourced,
+# so it must never be a path an attacker can pre-create (see CACHE_DIR rationale).
+_parallel_tmp="$(mktemp -d "${CACHE_DIR}/parallel.XXXXXX" 2>/dev/null)" || _parallel_tmp="$(mktemp -d)"
 NOW_EPOCH=$(date +%s)
 
 # 1. Git
@@ -375,7 +391,9 @@ if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
     if [ "$cache_age" -gt "$WEATHER_CACHE_TTL" ]; then
         lat="" lon=""
         if [ -f "$LOCATION_CACHE" ]; then
-            eval "$(jq -r '"lat=\(.latitude // empty)\nlon=\(.longitude // empty)"' "$LOCATION_CACHE" 2>/dev/null)"
+            # @sh-quote the geocoder values before eval — they originate from a
+            # remote API (ipwho.is); a compromised/MITM'd response must not inject.
+            eval "$(jq -r '"lat=\(.latitude // empty | @sh)\nlon=\(.longitude // empty | @sh)"' "$LOCATION_CACHE" 2>/dev/null)"
         fi
         # No fabricated default location — only fetch when we actually know where
         # the user is, so the temperature reflects THEIR location (or shows "—").
@@ -391,7 +409,8 @@ if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
             fi
             weather_json=$(curl -s --max-time 3 "https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&temperature_unit=${TEMP_UNIT}" 2>/dev/null)
             if [ -n "$weather_json" ] && echo "$weather_json" | jq -e '.current' >/dev/null 2>&1; then
-                eval "$(echo "$weather_json" | jq -r '.current | "temp=\(.temperature_2m)\ncode=\(.weather_code)\nis_day=\(.is_day)"' 2>/dev/null)"
+                # @sh-quote remote API values (open-meteo.com) before eval.
+                eval "$(echo "$weather_json" | jq -r '.current | "temp=\(.temperature_2m | @sh)\ncode=\(.weather_code | @sh)\nis_day=\(.is_day | @sh)"' 2>/dev/null)"
                 case "$code" in
                     0)              [ "${is_day:-1}" = "0" ] && icon="🌙" || icon="☀️" ;;
                     1)              [ "${is_day:-1}" = "0" ] && icon="🌙" || icon="🌤️" ;;
