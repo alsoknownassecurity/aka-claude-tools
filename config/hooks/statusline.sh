@@ -4,7 +4,7 @@
 #   nano (<35) · micro (35-54) · mini (55-79) · normal (80+)
 # Normal layout (boxed card, 3 lines; dim │ between major segments; segments
 # in [brackets] are conditional and only appear when CC provides the data):
-#   ╭ AKA ▸ repo/branch [*dirty ↑a ↓b stash:n wt:name] [│ PR#n ✓] │ model [effort]
+#   ╭ AKA/host ▸ repo/branch [*dirty ↑a ↓b stash:n wt:name] [│ PR#n ✓] │ model [effort]
 #   │ CTX <gauge> % │ 5H % ↻reset │ WK % ↻reset [│ +credits] [│ +added −removed]
 #   ╰ <time>  <weather>  <region> [│ SESSION SUMMARY]
 #     (clock + temp localized by geolocation; region is the abbreviated
@@ -40,6 +40,12 @@ if ! mkdir -p "$CACHE_DIR" 2>/dev/null || [ ! -O "$CACHE_DIR" ]; then
     CACHE_DIR="$(mktemp -d 2>/dev/null)" || CACHE_DIR="/tmp"
 fi
 chmod 700 "$CACHE_DIR" 2>/dev/null || true
+
+# Short hostname for the brand mark (e.g. AKA/dev) — strips the fleet's HOST-
+# prefix so the label matches reference/fleet-state.md naming. Empty-safe: the
+# mark falls back to a bare "AKA" when no hostname is resolvable.
+HOSTNAME_SHORT=$(hostname -s 2>/dev/null | sed 's/^HOST-//')
+HOSTNAME_SHORT="${HOSTNAME_SHORT//%/%%}"
 
 # Per-config cache key so multiple config folders don't collide.
 _CFG_KEY="$(printf '%s' "$CFG_DIR" | tr -c 'A-Za-z0-9' '_')"
@@ -580,7 +586,11 @@ meter() {
 
 # Brand mark, card-frame edge, separator (dim │ between major segments;
 # within a group: git-style repo/branch, double-spaces on the ambient line)
-mark() { printf "${BOLD}${AKA_GREEN}AKA${RESET} ${AKA_DIM}▸${RESET} "; }
+mark() {
+    printf "${BOLD}${AKA_GREEN}AKA${RESET}"
+    [ -n "$HOSTNAME_SHORT" ] && printf "${AKA_DIM}/${RESET}${AKA_MUTED}${HOSTNAME_SHORT}${RESET}"
+    printf " ${AKA_DIM}▸${RESET} "
+}
 edge() { printf "${AKA_FAINT}%s${RESET} " "$1"; }
 pipe() { printf " ${AKA_DIM}│${RESET} "; }
 
