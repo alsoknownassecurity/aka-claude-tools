@@ -4,15 +4,13 @@
 #   nano (<35) · micro (35-54) · mini (55-79) · normal (80+)
 # Normal layout (boxed card, 3 lines; dim │ between major segments; segments
 # in [brackets] are conditional and only appear when CC provides the data):
-#   ╭ AKA ▸ repo/branch [✎dirty ↑a ↓b ⊡stash ⎇worktree] [│ PR#n ✓] │ model [effort]
+#   ╭ AKA ▸ repo/branch [*dirty ↑a ↓b stash:n wt:name] [│ PR#n ✓] │ model [effort]
 #   │ CTX <gauge> % │ 5H % ↻reset │ WK % ↻reset [│ +credits] [│ +added −removed]
 #   ╰ <time>  <weather>  <region> [│ SESSION SUMMARY]
 #     (clock + temp localized by geolocation; region is the abbreviated
 #     state/region code — coarser than city, so less wrong when IP geolocation
 #     misses, and pinnable via preferences.location; session summary is CC's
 #     session_name, uppercased + truncated to the terminal width)
-# Distinct from the original: AKA green leads, ▰▱ block gauges (not the
-# ⛁ buckets), uppercase letter-spaced labels, no full-width rules.
 # Resolves its config dir from $CLAUDE_CONFIG_DIR so it works in any isolated
 # config folder created by the aka-claude-tools installer (defaults to ~/.claude).
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -515,7 +513,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE — AKA-inspired, tuned for dark terminals. The brand palette was made
 # for a white page; here the AKA green (#00E0B8) leads and the neutrals are
-# lifted so they read on black. 
+# lifted so they read on black.
 # ─────────────────────────────────────────────────────────────────────────────
 
 RESET='\033[0m'; BOLD='\033[1m'
@@ -567,15 +565,15 @@ mark() { printf "${BOLD}${AKA_GREEN}AKA${RESET} ${AKA_DIM}▸${RESET} "; }
 edge() { printf "${AKA_FAINT}%s${RESET} " "$1"; }
 pipe() { printf " ${AKA_DIM}│${RESET} "; }
 
-# repo/branch [✎dirty] [↑a ↓b] [⊡stash] [⎇worktree], or cwd when not a git repo
+# repo/branch [*dirty] [↑a ↓b] [stash:n] [wt:name], or cwd when not a git repo
 git_segment() {
     if [ "${is_git_repo:-false}" = "true" ]; then
         printf "${AKA_TEXT}${repo}${RESET}${AKA_DIM}/${RESET}${AKA_CYAN}${branch}${RESET}"
-        [ "${dirty:-0}" -gt 0 ] 2>/dev/null && printf " ${SEV_WARN}✎${dirty}${RESET}"
+        [ "${dirty:-0}" -gt 0 ] 2>/dev/null && printf " ${SEV_WARN}*${dirty}${RESET}"
         { [ "${ahead:-0}" -gt 0 ] || [ "${behind:-0}" -gt 0 ]; } 2>/dev/null \
             && printf " ${AKA_DIM}↑${ahead:-0} ↓${behind:-0}${RESET}"
-        [ "${stash_count:-0}" -gt 0 ] 2>/dev/null && printf " ${AKA_DIM}⊡${stash_count}${RESET}"
-        [ -n "${wt_name:-}" ] && printf " ${AKA_DIM}⎇${wt_name}${RESET}"
+        [ "${stash_count:-0}" -gt 0 ] 2>/dev/null && printf " ${AKA_DIM}stash:${stash_count}${RESET}"
+        [ -n "${wt_name:-}" ] && printf " ${AKA_DIM}wt:${wt_name}${RESET}"
     else
         printf "${AKA_MUTED}${dir_name}${RESET}"
     fi
@@ -626,7 +624,7 @@ if [ "$MODE" != "normal" ]; then
             pipe; printf "${AKA_LAVENDER}${model_short}${RESET}\n"
             if [ "${is_git_repo:-false}" = "true" ]; then
                 printf "${AKA_CYAN}${branch}${RESET}"
-                [ "${dirty:-0}" -gt 0 ] 2>/dev/null && printf " ${SEV_WARN}✎${dirty}${RESET}"
+                [ "${dirty:-0}" -gt 0 ] 2>/dev/null && printf " ${SEV_WARN}*${dirty}${RESET}"
                 printf "\n"
             fi
             ;;
