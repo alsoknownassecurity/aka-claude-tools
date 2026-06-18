@@ -13,7 +13,11 @@
 #     alias aka='CLAUDE_CONFIG_DIR="$HOME/.claude-aka" claude'
 #
 # Re-run any time to add another config folder. Idempotent: re-running for the
-# same folder/alias updates in place instead of duplicating.
+# same folder/alias updates in place instead of duplicating. Idempotent BOTH
+# ways: unchecking an addition you previously installed UNINSTALLS it — its
+# hook/command/skill files and its settings contributions (hook registrations,
+# statusLine, and the permission/env rules it shipped) are removed. Your own
+# rules, hooks, and files are never touched.
 #
 # The target can also be the DEFAULT ~/.claude: the installer offers to move it
 # to a timestamped backup, rebuild it clean with the selected additions, and
@@ -22,11 +26,25 @@
 # $HOME, Keychain auth is keyed to the unchanged dir path, and a file-based
 # .credentials.json is copied back from the backup.
 #
+# UPGRADES PRESERVE YOUR STATE. An upgrade is never a fresh install: a clean
+# rebuild automatically restores the profile's OWN runtime state from the backup
+# — conversations, memory/, prompt history, todos, tasks, plus CLAUDE.md and your
+# settings.json — then re-applies the current kit files on top. Only secret-bearing
+# caches (credentials are restored separately; shell-snapshots / paste-cache /
+# file-history / session-env are left in the backup) sit outside that restore.
+# The blast radius of an upgrade is the kit-managed surface, not your data.
+#
 # Flags:
 #   --defaults         non-interactive; accept every default (config ~/.claude-aka,
 #                      alias `aka`, recommended additions, no copy of existing config).
 #   --no-auth-inherit  do NOT seed the new profile's .claude.json from your existing
 #                      login (use when the profile is for a DIFFERENT account).
+#   --clean            force the back-up + clean-rebuild path (default for an existing
+#                      non-default profile is layer-in-place). State is restored either
+#                      way; --clean additionally refreshes kit-managed FILES (hooks,
+#                      commands, skills) to the current version rather than leaving the
+#                      old ones in place. Settings permissions are reconciled (adopt
+#                      new / retire dropped) in both paths.
 
 set -euo pipefail
 
@@ -39,10 +57,12 @@ RETIRED_PERMS="$(cat "$CONFIG_SRC/managed-permissions.json" 2>/dev/null || print
 source "$REPO_DIR/shared/lib/common.sh"
 
 SEED_AUTH=1
+CT_CLEAN=0
 for arg in "$@"; do
   case "$arg" in
     --defaults)        export CT_NONINTERACTIVE=1 ;;
     --no-auth-inherit) SEED_AUTH=0 ;;
+    --clean)           CT_CLEAN=1 ;;
   esac
 done
 
@@ -126,6 +146,77 @@ idxs_to_subarray() {
   [ -z "$idxs" ] && { printf '[]'; return; }
   local jqidx; jqidx="$(printf '%s\n' $idxs | jq -s 'map(. - 1)')"
   jq -cn --argjson a "$arr" --argjson i "$jqidx" '[ $i[] as $k | $a[$k] ]'
+}
+
+# ── uninstall a deselected addition ──────────────────────────────────────────
+# A plain merge only ADDS, so unchecking an addition on a re-run used to leave
+# its files and settings behind forever. These helpers remove exactly what an
+# addition contributed — driven by config/additions.json (.hook/.command/.skill/
+# .settings/.statusLine) so they can't drift from the install logic. All are
+# idempotent: pruning something already absent is a no-op.
+
+# Remove every settings hook registration whose command references basename $1,
+# then drop any event left empty. Kit hooks are matched by their unique file
+# name, so a user's own hooks (different command) are never touched.
+prune_hook_regs() {
+  jq --arg b "$1" '
+    if (.hooks|type)=="object" then
+      (.hooks |= ( to_entries
+        | map(.value |= map(select(((.hooks // []) | map(.command // "") | any(contains($b))) | not)))
+        | map(select((.value|type)=="array" and (.value|length) > 0))
+        | from_entries ))
+      | (if (.hooks // {}) == {} then del(.hooks) else . end)
+    else . end'
+}
+
+# Drop .statusLine if its command references basename $1.
+prune_statusline() {
+  jq --arg b "$1" 'if ((.statusLine.command // "") | contains($b)) then del(.statusLine) else . end'
+}
+
+# Subtract an addition's shipped permission arrays + env keys (read from its
+# payload file $1) from the settings on stdin. Set-difference on permission
+# arrays and key-removal on env — only the exact rules the kit shipped go; any
+# the user also keeps elsewhere in their own rules are unaffected (the kit rule
+# is a duplicate the union would re-add anyway).
+prune_perms_env() {
+  local p; p="$(jq -c '{permissions: (.permissions // {}), env: (.env // {})}' "$1" 2>/dev/null || printf '{}')"
+  jq --argjson p "$p" '
+    ( if (.permissions|type)=="object" then
+        reduce ("allow","deny","ask") as $k (.;
+          if (.permissions[$k]?) and ($p.permissions[$k]?) then
+            (.permissions[$k] = (.permissions[$k] - $p.permissions[$k]))
+            | (if (.permissions[$k]|length) == 0 then del(.permissions[$k]) else . end)
+          else . end)
+        | (if (.permissions // {}) == {} then del(.permissions) else . end)
+      else . end )
+    | ( if (.env|type)=="object" then
+          (.env |= with_entries(select((.key) as $k | ($p.env | has($k)) | not)))
+          | (if (.env // {}) == {} then del(.env) else . end)
+        else . end )'
+}
+
+# addition_owned_paths <id> <config_dir> → echo the files/dirs the addition owns.
+addition_owned_paths() {
+  local id="$1" cfg="$2" key rel
+  for key in hook command statusLine skill; do
+    rel="$(jq -r --arg i "$id" --arg k "$key" '.additions[] | select(.id==$i) | .[$k] // ""' "$CONFIG_SRC/additions.json")"
+    [ -n "$rel" ] && echo "$cfg/$rel"
+  done
+}
+
+# prune_addition_from_settings <id>  (settings json on stdin → pruned on stdout)
+# Applies the relevant prunes for one addition based on its additions.json entry.
+prune_addition_from_settings() {
+  local id="$1" s hook sline setf
+  s="$(cat)"
+  hook="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .hook // ""'       "$CONFIG_SRC/additions.json")"
+  sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
+  setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
+  [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
+  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(basename "$sline")")"
+  [ -n "$setf" ] && [ -f "$CONFIG_SRC/$setf" ] && s="$(printf '%s' "$s" | prune_perms_env "$CONFIG_SRC/$setf")"
+  printf '%s' "$s"
 }
 
 # ── managed-permission reconciliation ────────────────────────────────────────
@@ -350,18 +441,22 @@ setup_one_config() {
     local _disp="${config_dir/#$HOME/~}" _rebuild_def="N"
     # Default to rebuild only for the canonical default config; for any other
     # existing profile default to layer-in-place so an idempotent re-run (add an
-    # addition) never surprises you by wiping the dir.
+    # addition) never surprises you by wiping the dir. --clean opts into the
+    # rebuild explicitly (state is restored from the backup either way).
     [ "$is_default" = "1" ] && _rebuild_def="Y"
+    [ "$CT_CLEAN" = "1" ] && _rebuild_def="Y"
     say ""
     if [ "$is_default" = "1" ]; then
       warn "Target is your DEFAULT Claude config (~/.claude)."
     else
       warn "Target ${_disp} already exists."
     fi
-    say  "  ${C_DIM}Back up + rebuild: ${_disp} is moved to a timestamped backup, recreated clean"
-    say  "  with the additions you pick, and you choose what to migrate back from the backup."
-    say  "  Already running aka-claude-tools here? This IS the upgrade path — it replaces the old"
-    say  "  additions with the current ones and migrates your config back, no cruft.${C_RST}"
+    say  "  ${C_DIM}Back up + rebuild: ${_disp} is moved to a timestamped backup and recreated clean"
+    say  "  with the current kit files. Already running aka-claude-tools here? This IS the upgrade"
+    say  "  path — it refreshes the additions to this version with no cruft.${C_RST}"
+    say  "  ${C_DIM}Not a fresh install: your conversations, memory/, prompt history, todos, CLAUDE.md"
+    say  "  and settings.json are restored automatically from the backup. Only user-added agents/"
+    say  "  skills/commands/hooks are an explicit pick below.${C_RST}"
     say  "  ${C_DIM}Your login survives: account metadata + a file-based .credentials.json are restored"
     say  "  from the backup, and Keychain auth is keyed to the unchanged dir path.${C_RST}"
     say  "  ${C_DIM}A running Claude Code session keeps working — it's already loaded in memory —"
@@ -396,6 +491,35 @@ setup_one_config() {
         cp "$rebuild_backup/aka-claude-tools.config" "$config_dir/aka-claude-tools.config"
         ok "Restored aka-claude-tools.config"
       fi
+      # The profile's OWN data — restored automatically so a clean rebuild is an
+      # upgrade, not a fresh install. This is the dir's own state coming back
+      # (not a cross-config migration), so it is unconditional, not prompted.
+      #   • settings.json  — restored first so the build MERGES the current kit
+      #     settings onto the user's (reconciling retired rules), instead of
+      #     starting from empty. Same dir → hook paths are unchanged, no rewrite.
+      #   • CLAUDE.md      — user-authored global memory/imports, not kit content.
+      #   • session state  — conversations, memory/, prompt history, todos, tasks
+      #     (migrate_sessions / CT_SESSION_ITEMS). Secret-bearing caches
+      #     (shell-snapshots, paste-cache, file-history, session-env) stay in the
+      #     backup by design; .credentials.json was already restored above.
+      if [ -f "$rebuild_backup/settings.json" ]; then
+        cp "$rebuild_backup/settings.json" "$config_dir/settings.json"
+        ok "Restored settings.json (reconciled with this version's kit settings below)"
+      fi
+      if [ -f "$rebuild_backup/CLAUDE.md" ]; then
+        cp "$rebuild_backup/CLAUDE.md" "$config_dir/CLAUDE.md"
+        ok "Restored CLAUDE.md ($(wc -l < "$config_dir/CLAUDE.md" | tr -d ' ') lines)"
+      fi
+      migrate_sessions "$rebuild_backup" "$config_dir"
+      # Transparency: report exactly what runtime state came back. An upgrade
+      # should be auditable — the kit's "never change things silently" principle
+      # applies to restores too. Counts are best-effort and portable (BSD/GNU).
+      if [ -d "$config_dir/projects" ]; then
+        local _nmem _nconv
+        _nmem="$(find "$config_dir/projects" -type d -name memory 2>/dev/null | wc -l | tr -d ' ')"
+        _nconv="$(find "$config_dir/projects" -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+        ok "Restored runtime state: ${_nmem} memory dir(s), ${_nconv} conversation(s)"
+      fi
     else
       say "  ${C_DIM}No backup — layering additions onto ${_disp} in place instead.${C_RST}"
     fi
@@ -426,7 +550,13 @@ setup_one_config() {
     if [ -n "$migrate_src" ]; then
       mkdir -p "$config_dir"
       ok "Migrating from ${migrate_src/#$HOME/~}"
-      if [ -f "$migrate_src/settings.json" ] && confirm "  • merge your existing settings.json (hook paths auto-rewritten)?" "Y"; then
+      # In the rebuild path the source IS this profile's own backup, and its
+      # settings.json, CLAUDE.md, and session history were already restored
+      # automatically above. Skip those prompts and offer only the items the
+      # auto-restore deliberately leaves to a choice (agents, skills, commands,
+      # output-styles, user hooks).
+      [ "$migrate_src" = "$rebuild_backup" ] && isay "  ${C_DIM}settings.json, CLAUDE.md & session history already restored from the backup — pick any extra agents/skills/commands/hooks to bring back.${C_RST}"
+      if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/settings.json" ] && confirm "  • merge your existing settings.json (hook paths auto-rewritten)?" "Y"; then
         rewrite_hook_paths "$config_dir" < "$migrate_src/settings.json" > "$config_dir/settings.json.mig"
         # Dangerous-mode settings are the user's call, not ours: if their config
         # already runs with bypassPermissions / skip-prompt flags, surface it and
@@ -448,7 +578,7 @@ setup_one_config() {
         mv "$config_dir/settings.json.mig" "$config_dir/settings.json"
         ok "Staged your settings.json → this profile (hook paths rewritten)"
       fi
-      if [ -f "$migrate_src/CLAUDE.md" ] && confirm "  • copy your CLAUDE.md?" "N"; then
+      if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/CLAUDE.md" ] && confirm "  • copy your CLAUDE.md?" "N"; then
         cp "$migrate_src/CLAUDE.md" "$config_dir/CLAUDE.md"; ok "Copied CLAUDE.md"
       fi
       migrate_category "$migrate_src" "$config_dir" agents        file
@@ -457,12 +587,15 @@ setup_one_config() {
       migrate_category "$migrate_src" "$config_dir" output-styles file
       migrate_category "$migrate_src" "$config_dir" hooks         file
       # Optional: bring over session/history state (past conversations, input
-      # history, todos). OFF by default — it's personal and can be large, and
-      # secrets / shell-env / paste caches are never included (see
-      # migrate_sessions in common.sh).
-      isay ""
-      if confirm "  • also migrate session history (past conversations, input history, todos)?" "N"; then
-        migrate_sessions "$migrate_src" "$config_dir"
+      # history, todos) from ANOTHER config. OFF by default — it's personal and
+      # can be large, and secrets / shell-env / paste caches are never included
+      # (see migrate_sessions in common.sh). Skipped when the source is this
+      # profile's own rebuild backup — that state was already restored above.
+      if [ "$migrate_src" != "$rebuild_backup" ]; then
+        isay ""
+        if confirm "  • also migrate session history (past conversations, input history, todos)?" "N"; then
+          migrate_sessions "$migrate_src" "$config_dir"
+        fi
       fi
     fi
   fi
@@ -585,6 +718,27 @@ setup_one_config() {
   # 4d. merge settings (existing-in-dir ∪ additions) and write
   local existing='{}'
   [ -f "$config_dir/settings.json" ] && existing="$(cat "$config_dir/settings.json")"
+
+  # 4d-pre. Uninstall deselected additions. Unchecking an addition you had
+  # before now REMOVES it: its hook/command/skill files are deleted and its
+  # settings contributions (hook registrations, statusLine, shipped permission/
+  # env rules) are pruned from `existing` before the merge re-adds the selected
+  # ones. Driven by config/additions.json; idempotent (no-op for anything not
+  # actually present), so it's safe to run for every unselected id.
+  local _uid _p _changed
+  for _uid in $(jq -r '.additions[].id' "$CONFIG_SRC/additions.json"); do
+    is_selected "$_uid" "$_sel_ids" && continue
+    _changed=0
+    while IFS= read -r _p; do
+      [ -n "$_p" ] && [ -e "$_p" ] && { rm -rf "$_p"; _changed=1; }
+    done < <(addition_owned_paths "$_uid" "$config_dir")
+    if [ "$existing" != "{}" ]; then
+      local _pruned; _pruned="$(printf '%s' "$existing" | prune_addition_from_settings "$_uid")"
+      [ -n "$_pruned" ] && [ "$_pruned" != "$existing" ] && { existing="$_pruned"; _changed=1; }
+    fi
+    [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
+  done
+
   # Reconcile kit-managed permission rules first: a plain merge only UNIONS, so it
   # can add new denies/allows but never drop ones the kit has retired. This shows
   # the engineer the per-rule diff and lets them choose (default: adopt this
@@ -611,7 +765,7 @@ setup_one_config() {
   if [ "$is_default" = "1" ]; then
     say ""
     ok "Default config ~/.claude ready — plain ${C_BOLD}claude${C_RST} launches it."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Backup kept at ${rebuild_backup/#$HOME/~} (sessions, history, and anything not migrated stay there — delete it once you're happy).${C_RST}"
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history) — delete it once you're happy.${C_RST}"
     say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
   else
     local rc; rc="$(detect_shell_rc)"
@@ -621,6 +775,7 @@ setup_one_config() {
 
     say ""
     ok "Config '${alias_name}' ready."
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history) — delete it once you're happy.${C_RST}"
     say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
   fi
 
