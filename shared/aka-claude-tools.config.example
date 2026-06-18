@@ -1,29 +1,75 @@
-# aka-claude-tools.config — OPT-IN org-specific settings, sourced by aka-claude-tools hooks.
+# aka-claude-tools.config — opt-in, environment-specific policy for the guard hooks
+# ════════════════════════════════════════════════════════════════════════════
+# This file tunes two aka-claude-tools hooks to YOUR environment. It ships with
+# every value empty, so the hooks are no-ops until you set something here — the
+# kit never assumes anything about your org, network, or tooling.
 #
-# Copy this to the root of your Claude config dir as `aka-claude-tools.config`
-# (e.g. ~/.claude-aka/aka-claude-tools.config) and uncomment what you need.
-# The installer can place a copy for you. NOTHING here ships by default —
-# every value below is empty unless YOU set it.
+#   WHAT THIS IS   — policy and patterns: what to redact, what to steer away from.
+#   WHAT IT IS NOT — a place for secrets. Nothing here is a credential. These are
+#                    the patterns that keep credentials and internal details from
+#                    leaking — never the secrets themselves.
 #
-# This is a shell file: `KEY="value"` syntax, sourced by bash. No secrets here —
-# these are *patterns to block*, not credentials.
+# How it's loaded (first hit wins):
+#   1. $CLAUDETOOLS_CONFIG                          explicit override
+#   2. $CLAUDE_CONFIG_DIR/aka-claude-tools.config   your active profile
+#   3. ~/.claude/aka-claude-tools.config            default profile
+#
+# It's a shell file (`KEY="value"`, sourced by bash) and is restored automatically
+# across `install.sh` upgrades — set it once. To use it:
+#   cp aka-claude-tools.config.example "$CLAUDE_CONFIG_DIR/aka-claude-tools.config"
+# then uncomment what you need below.
 
-# ── leak-guard.sh (Tier 2) ─────────────────────────────────────────
-# A single extended-regex (ERE) of internal identifiers that must never leave in
-# a web search/fetch query or an outbound shell command (curl/wget/…): tailnet
-# domains, internal IP ranges, VCS usernames, absolute home paths, project
-# codenames. Pipe-separate alternatives.
+
+# ── leak-guard.sh — keep internal details from leaving the building ─
+# Threat model: an agent pastes an internal hostname, IP, username, absolute home
+# path, or unreleased codename into a *web search/fetch* query or an *outbound*
+# shell command (curl/wget/nc/…), quietly handing your topology to a third party.
+# This is a per-environment denylist of identifiers that must never egress; a hit
+# blocks the query/command before it leaves.
 #
-# Example:
-#   CT_EGRESS_PATTERNS='example-corp\.internal|10\.42\.[0-9]+\.[0-9]+|/Users/jdoe/|acme-vcs-user'
+# CT_EGRESS_PATTERNS — ONE extended-regex (ERE), pipe-separated alternatives.
+# Substring match, case-sensitive; escape any literal dots. Categories to mix:
+#
+#   internal / tailnet domains   acme\.internal | [a-z0-9-]+\.ts\.net
+#   RFC1918 + CGNAT ranges       10\.[0-9]+\.[0-9]+\.[0-9]+ | 192\.168\.[0-9]+\.[0-9]+
+#                                100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.   # tailscale 100.64/10
+#   VCS / SSO usernames          acme-vcs-bot | jdoe@acme
+#   absolute home paths          /Users/jdoe/ | /home/jdoe/
+#   unreleased codenames         project-bluejay | falcon-rewrite
+#
+# Example (one line — combine the categories you care about):
+#   CT_EGRESS_PATTERNS='acme\.internal|[a-z0-9-]+\.ts\.net|10\.[0-9]+\.[0-9]+\.[0-9]+|/Users/jdoe/|project-bluejay'
 CT_EGRESS_PATTERNS=""
 
-# ── harness-pointer.sh ───────────────────────────────────────────────────────
-# Pipe-separated list of command names (matched as the first word) to block,
-# plus the hint shown to the agent when one is blocked. Empty = no-op.
+
+# ── harness-pointer.sh — steer the agent to the right tool for THIS environment ─
+# When an agent reaches for a command that's wrong here — not installed, not
+# authenticated, or simply not how your team works — intercept it and hand back
+# the correct approach, instead of letting it fail confusingly and thrash through
+# retries. GUIDANCE, not a security boundary: it matches only the first word, so
+# `sudo <cmd>` and pipes slip past — real restrictions belong in
+# settings.json `permissions.deny`.
 #
-# Example (team uses a self-hosted VCS, wants to steer away from the GitHub CLI):
+# CT_BLOCKED_CMDS — ERE alternation of command names (first word) to intercept.
+# CT_BLOCKED_HINT — the message returned to the agent on a match. Make it
+#                   ACTIONABLE: say what to do instead, not just "no".
+#
+# Example — GitHub over SSH, no API token on the box (a least-privilege git
+# posture: auth is scoped to git transport only, and there's no broad gh token to
+# steal or pivot through):
+#   CT_BLOCKED_CMDS="gh"
+#   CT_BLOCKED_HINT="gh isn't authenticated here — this environment uses SSH to GitHub. Use git over SSH for clone/fetch/push, and open PRs from the branch's compare page: https://github.com/<owner>/<repo>/compare/main...<branch>?expand=1 (derive <owner>/<repo> from 'git remote get-url origin')."
+#
+# Example — self-hosted VCS, the GitHub CLI simply doesn't apply:
 #   CT_BLOCKED_CMDS="gh"
 #   CT_BLOCKED_HINT="Use plain git — this team's remote is self-hosted, not GitHub."
+#
+# Example — keep agents off production tooling, push them to a guarded wrapper:
+#   CT_BLOCKED_CMDS="kubectl|helm"
+#   CT_BLOCKED_HINT="Don't touch the cluster directly — use ./scripts/deploy (it pins the context and requires an approval)."
+#
+# Example — enforce a toolchain choice:
+#   CT_BLOCKED_CMDS="npm|npx|yarn"
+#   CT_BLOCKED_HINT="This repo standardises on bun — use bun / bunx instead."
 CT_BLOCKED_CMDS=""
-CT_BLOCKED_HINT="This command is blocked by your team's aka-claude-tools harness-pointer."
+CT_BLOCKED_HINT="This command isn't the right tool in this environment (aka-claude-tools harness-pointer) — see aka-claude-tools.config for the intended approach."
