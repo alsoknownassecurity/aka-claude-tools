@@ -77,6 +77,24 @@
       "matcher": "Bash",
       "event": "PreToolUse",
       "usesConfig": true
+    },
+    {
+      "id": "shell-audit",
+      "name": "Shell startup audit skill",
+      "prompt": "Shell startup audit skill (aliases, secrets, persistence, git drift)?",
+      "recommended": true,
+      "description": "Read-only auditor + skill. Walks your shell rc and every file it sources (cycle-safe) and flags: hardcoded credentials (values redacted), persistence-suspicious patterns (pipe-to-shell, eval-of-fetched, DYLD/LD_PRELOAD, writes into other rc files), duplicate or dangling aliases, and git-baseline drift. A detective tripwire for the shell-startup slice — nothing is modified; not a substitute for launchd/cron/ssh review.",
+      "skill": "skills/shell-audit"
+    },
+    {
+      "id": "startup-write-guard",
+      "name": "Startup-write guard",
+      "prompt": "Startup-write guard — block Bash writes to shell rc files [persistence]?",
+      "recommended": true,
+      "description": "PreToolUse guard on Bash. Blocks commands that write/append/redirect into shell startup files (~/.zshrc, ~/.zshenv, ~/.bashrc, ~/.profile, …), closing the gap the secure-settings Edit/Write deny leaves open: a Bash `echo >> ~/.zshrc` redirection bypasses that deny. Reads are unaffected; intentional edits go through your own shell. Guidance, not a hard boundary.",
+      "hook": "hooks/startup-write-guard.sh",
+      "matcher": "Bash",
+      "event": "PreToolUse"
     }
   ]
 }

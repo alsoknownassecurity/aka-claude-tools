@@ -122,6 +122,11 @@ the user's go-ahead.
   the profile's `permissions.allow` (union, never replace). It contains only
   strictly read-only `rtk` forms; do NOT widen it to `Bash(rtk:*)` — rtk fronts
   curl/aws/psql/docker, so a blanket prefix is effectively a general Bash allow.
+- **Startup-write guard (if selected):** a plain `hooks.PreToolUse` Bash
+  registration of `<dir>/hooks/startup-write-guard.sh` — no special handling.
+- **Shell-audit skill (if selected):** copied as a skill dir (per the skills rule
+  above); also `chmod +x <dir>/skills/shell-audit/audit.sh` so the skill can run
+  the bundled auditor.
 - **Statusline location (if the statusline is enabled):** offer to pin an exact
   location for weather (default: auto-detect by IP, city-level). Make clear that
   nothing is saved or collected — if they give a city/address, geocode it once
@@ -141,13 +146,30 @@ the user's go-ahead.
   - `~/.claude/.credentials.json` present (Linux/file-based) → copy it in.
   - macOS Keychain → can't migrate (keyed per config dir); tell the user they'll
     `/login` once on first launch, or `claude setup-token` to cover all profiles.
-- **Alias**: add it to the user's shell rc inside an idempotent managed block:
-  ```
-  # >>> aka-claude-tools managed: <alias> >>>
-  alias <alias>='CLAUDE_CONFIG_DIR="<dir>" claude'
-  # <<< aka-claude-tools managed: <alias> <<<
-  ```
-  Replace the block if one with the same alias already exists.
+- **Alias**: **review the user's existing aliases before adding one.** Read the
+  shell rc *and every file it sources, recursively* (e.g. `~/.zshrc` →
+  `~/docs/shared/zshrc-aliases.sh` → …) and check whether `<alias>` is already
+  defined anywhere:
+  - **Already resolves to THIS config dir** (e.g. a fleet-wide aliases file
+    defines it): do **not** add a duplicate. If a stale `aka-claude-tools managed`
+    block for it exists, remove that block so there's a single definition. Tell
+    the user it's already covered.
+  - **Resolves to a DIFFERENT target** (another profile, or a non-launcher alias):
+    don't shadow it. Surface the existing definition and its source file, and
+    propose a different alias name (or skip the alias and give the user the
+    `CLAUDE_CONFIG_DIR="<dir>" claude` invocation).
+  - **Name is free**: add it to the rc inside an idempotent managed block:
+    ```
+    # >>> aka-claude-tools managed: <alias> >>>
+    alias <alias>='CLAUDE_CONFIG_DIR="<dir>" claude'
+    # <<< aka-claude-tools managed: <alias> <<<
+    ```
+    Replace the block if one with the same alias already exists.
+
+  (The shell installer already does this via `alias_target_elsewhere`, which
+  walks the full `source` chain with a cycle guard; as the agent, do the same
+  review and additionally reason about ambiguous cases — e.g. an alias built from
+  a variable, or one defined inside a conditional.)
 
 ## 5. Verify, then report
 
