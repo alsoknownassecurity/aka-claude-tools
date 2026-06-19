@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest a new addition, guard, or installer behavior.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that's hard, unsafe, or unsupported today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: >
+        What should aka-claude-tools do? If it's a new "addition," note that it
+        would live in `config/additions.json` (the single source of truth for both
+        the installer and the agent path).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why this one is better.
+    validations:
+      required: false
