@@ -352,10 +352,19 @@ guards do and don't catch](#what-the-egress-guards-do-and-dont-catch)).
 
 ## Acknowledgments
 
-The command-guard and RTK rewriting additions are ported from
+aka-claude-tools is an independent toolkit — installed on its own, with no other
+framework required. Its design was informed by earlier work in the Claude Code
+security and tooling space, with thanks to:
 
-notice. Built for [Claude Code](https://docs.claude.com/en/docs/claude-code).
+- [PAI (Personal AI Infrastructure)](https://github.com/danielmiessler/PAI) by
+  Daniel Miessler — early inspiration for the Bash egress-guard and command-rewriting
+  hook concepts.
+- [trailofbits/claude-code-config](https://github.com/trailofbits/claude-code-config)
+  — reference for the secure permission defaults and the maintainer-self-PR workflow.
+
+The implementations here are our own. Built for
+[Claude Code](https://docs.claude.com/en/docs/claude-code).
 
 ## License
 
-[MIT](LICENSE). 
+[MIT](LICENSE).

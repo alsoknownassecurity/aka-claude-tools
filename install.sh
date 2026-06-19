@@ -652,8 +652,8 @@ setup_one_config() {
   if is_selected rtk-safe "$_sel_ids"; then
     ensure_dep rtk "rtk (RTK rewriting)" 0 || true
     # rtk-safe self-skips at runtime if rtk/jq are absent, so it's safe to register unconditionally.
-    place_file "$CONFIG_SRC/hooks/rtk-safe.hook.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$config_dir/hooks/rtk-safe.hook.sh" \
+    place_file "$CONFIG_SRC/hooks/rtk-safe.sh" "$config_dir/hooks" +x
+    add="$(jq --arg cmd "$config_dir/hooks/rtk-safe.sh" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Read-only rtk allowlist: the rewrite changes the command string, so the
     # user's existing allow rules (e.g. Bash(git status:*)) no longer match the
