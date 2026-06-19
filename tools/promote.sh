@@ -70,10 +70,10 @@ if [ "$ALL" = 1 ]; then
 fi
 [ "${#keys[@]}" -gt 0 ] || die "name at least one addition id (or --all, --list)"
 
-# High-precision personal-trace scan. '.claude-aka' is legitimate product
-# branding and is intentionally NOT matched; example placeholders like
-# /Users/jdoe are fine — we match only the operator's real identifiers.
-LEAK_RE='lin\.example-user|gmail\.com|example-host|example-net|Will Lin <|aka-user@example|example-user@.*\.ts\.net|/Users/me|/home/me'
+# Personal/infra trace + secret patterns. Generic in-repo; operator-specific
+# identifiers come from $AKA_LEAK_EXTRA or the gitignored tools/leak-patterns.local.
+# Sets $LEAK_RE.  ('.claude-aka' is product branding and intentionally NOT matched.)
+source "$_SELF_DIR/leak-lib.sh"
 
 # Resolve a branch (never stage onto main — AGENTS.md forbids committing to main).
 cur_branch="$(git -C "$REPO" branch --show-current 2>/dev/null || echo)"
@@ -127,7 +127,7 @@ done
 
 # Leak scan over exactly what we copied.
 echo
-hits="$(cd "$REPO" && grep -rInE "$LEAK_RE" "${copied[@]}" 2>/dev/null || true)"
+hits="$(cd "$REPO" && grep -rInE -e "$LEAK_RE" -- "${copied[@]}" 2>/dev/null || true)"
 if [ -n "$hits" ]; then
   warn "personal-trace hits in promoted files:"; echo "$hits" >&2
   [ "$FORCE" = 1 ] || die "refusing to stage a leak (use --force to override after review)"

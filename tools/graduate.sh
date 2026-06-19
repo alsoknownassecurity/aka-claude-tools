@@ -47,7 +47,8 @@ done
 # author AND committer email. akaidentity.io covers collaborators; noreply@github
 # covers web merges.
 ALLOW_RE='@akasecurity\.io|@akaidentity\.io|noreply@github\.com'
-LEAK_RE='lin\.example-user|gmail\.com|example-host|example-net|Will Lin <|aka-user@example|example-user@.*\.ts\.net|/Users/me|/home/me'
+# Trace + secret patterns (generic in-repo; operator-specific via env / local file).
+source "$_SELF_DIR/leak-lib.sh"
 
 cd "$PUBLIC"
 [[ "$(git remote get-url origin)" == *aka-claude-tools.git ]] || die "origin of $PUBLIC is not the public repo"
@@ -68,7 +69,7 @@ ok "cherry-picked ${#commits[@]} ref(s)"
 bad="$(git log --format='%an <%ae>|%cn <%ce>' origin/main..HEAD | grep -vE "$ALLOW_RE" || true)"
 [ -z "$bad" ] || { printf 'disallowed identity on graduated commits:\n%s\n' "$bad" >&2; [ "$FORCE" = 1 ] || die "fix identity before pushing"; }
 # Leak guard on the resulting tree diff.
-leak="$(git diff origin/main..HEAD | grep -nE "$LEAK_RE" || true)"
+leak="$(git diff origin/main..HEAD | grep -nE -e "$LEAK_RE" || true)"
 [ -z "$leak" ] || { printf 'personal-trace in graduated diff:\n%s\n' "$leak" >&2; [ "$FORCE" = 1 ] || die "scrub before pushing"; }
 ok "identity + leak guards clean"
 

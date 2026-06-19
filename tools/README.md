@@ -31,8 +31,21 @@ review, and test them.
   tools/graduate.sh --branch fix/cve <dev-commit>...
   ```
 
+- **`audit-history.sh`** — pre-seed gate. Scans an entire git history (every blob
+  at every commit + commit messages) for secrets and operator-specific identifiers
+  before it's published. Run it on the public seed right before pushing.
+  ```bash
+  tools/audit-history.sh --repo ../aka-claude-tools-public --ref main
+  ```
+
 Both default the repo to the clone they live in and are fully overridable by env
 (`AKA_REPO`, `CLAUDE_CONFIG_DIR`, `AKA_PUBLIC`, `AKA_DEV`).
+
+**Leak patterns.** The committed patterns ([`leak-lib.sh`](leak-lib.sh)) are generic
+and name no specific person/host/namespace. Your own identifiers (name, tailnet,
+private namespaces) stay out of the repo — put them in a gitignored
+`tools/leak-patterns.local` (see `leak-patterns.local.example`) or `$AKA_LEAK_EXTRA`.
+promote / graduate / audit-history all pick them up.
 
 ## Tests
 
