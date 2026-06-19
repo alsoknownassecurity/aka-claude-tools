@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  flow:
+    name: pipeline flow tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tool versions
+        run: |
+          bash --version | head -1
+          jq --version
+          git --version
+      - name: run the flow suite
+        # Sandboxed (fake $HOME, throwaway clones) — touches no real profile.
+        # Exercises: install.sh forward deploy + path remap, additions.json
+        # manifest integrity (no orphans / missing files), and promote.sh
+        # reverse round-trip + leak-guard rejection.
+        run: bash tests/run.sh

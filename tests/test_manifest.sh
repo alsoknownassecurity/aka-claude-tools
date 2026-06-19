@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Manifest integrity — the #1 contributor mistake is adding a file but forgetting
+# the additions.json entry (or vice versa). This catches both, before review.
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+echo "test_manifest:"
+
+assert_ok   "additions.json is valid JSON" jq -e . "$ADDITIONS"
+
+# ids unique
+n_ids=$(jq -r '.additions[].id' "$ADDITIONS" | wc -l | tr -d ' ')
+n_uniq=$(jq -r '.additions[].id' "$ADDITIONS" | sort -u | wc -l | tr -d ' ')
+assert_eq   "addition ids are unique" "$n_ids" "$n_uniq"
+
+# Every declared file path (skill/hook/command/statusLine/settings) exists under config/.
+while IFS= read -r rel; do
+  [ -z "$rel" ] && continue
+  assert_file "declared file exists: config/$rel" "$REPO_ROOT/config/$rel"
+done < <(jq -r '.additions[] | .skill, .hook, .command, .statusLine, .settings | select(.!=null)' "$ADDITIONS")
+
+# No orphans: every top-level entry under config/{skills,hooks,commands} must be
+# declared by some addition. (Settings/JSON live in config/ root, not scanned.)
+declared="$(jq -r '.additions[] | .skill, .hook, .command, .statusLine | select(.!=null)' "$ADDITIONS" | sort -u)"
+for cat in skills hooks commands; do
+  [ -d "$REPO_ROOT/config/$cat" ] || continue
+  for entry in "$REPO_ROOT/config/$cat"/*; do
+    [ -e "$entry" ] || continue
+    rel="$cat/$(basename "$entry")"
+    if printf '%s\n' "$declared" | grep -qxF "$rel"; then
+      pass "shipped file is declared: $rel"
+    else
+      fail "orphan (undeclared) file: $rel" "add an addition to additions.json or remove the file"
+    fi
+  done
+done
+
+t_summary
