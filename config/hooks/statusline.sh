@@ -1,4 +1,5 @@
 #!/bin/bash
+# aka-claude-tools:managed-hook — installer-owned; auto-removed on upgrade if renamed/retired. Safe to delete.
 # ═══════════════════════════════════════════════════════════════════════════════
 # aka-claude-tools status line — design-first, AKA-branded. Width-responsive:
 #   nano (<35) · micro (35-54) · mini (55-79) · normal (80+)

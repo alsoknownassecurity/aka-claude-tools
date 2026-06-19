@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# aka-claude-tools:managed-hook — installer-owned; auto-removed on upgrade if renamed/retired. Safe to delete.
 # startup-write-guard.sh — PreToolUse hook for the Bash tool.
 #
 # Blocks Bash commands that WRITE to a shell startup file — append/redirect/tee/

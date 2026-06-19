@@ -749,6 +749,26 @@ setup_one_config() {
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
 
+  # 4d-pre2. Self-clean stale kit hooks. Every shipped hook carries a managed
+  # marker (aka-claude-tools:managed-hook). Any marked hook in the profile that
+  # the kit NO LONGER ships — i.e. one it renamed or retired — is removed and its
+  # registration pruned. Marker-based, so it needs no maintained list and never
+  # touches the user's own (unmarked) hooks. (Profiles from before the marker
+  # existed carry unmarked old hooks; those are handled by a one-time migration,
+  # not here.)
+  if [ -d "$config_dir/hooks" ]; then
+    local _hf _hb
+    for _hf in "$config_dir"/hooks/*; do
+      [ -e "$_hf" ] || continue
+      grep -q 'aka-claude-tools:managed-hook' "$_hf" 2>/dev/null || continue   # not ours → leave it
+      _hb="$(basename "$_hf")"
+      [ -e "$CONFIG_SRC/hooks/$_hb" ] && continue                              # still shipped → keep
+      rm -f "$_hf"
+      [ "$existing" != "{}" ] && existing="$(printf '%s' "$existing" | prune_hook_regs "$_hb")"
+      ok "Removed renamed/retired kit hook '$_hb' (managed-marker)"
+    done
+  fi
+
   # Reconcile kit-managed permission rules first: a plain merge only UNIONS, so it
   # can add new denies/allows but never drop ones the kit has retired. This shows
   # the engineer the per-rule diff and lets them choose (default: adopt this
