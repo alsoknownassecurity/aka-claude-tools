@@ -18,7 +18,7 @@ give you:
 - **Per-context profiles you launch by name.** A work profile, a throwaway
   profile, a locked-down profile — each its own folder, each its own alias.
 - **A small set of genuinely useful additions** layered onto any profile:
-  secure defaults, a web-egress secret guard, a responsive status line, a
+  secure defaults, two-layer egress guards (web queries + outbound Bash), a responsive status line, a
   repo-agnostic `/wrap-up` command, and a loop-designer skill that compiles a
   spec into a minimal autonomous-run kickoff prompt.
 
@@ -159,8 +159,8 @@ saves you from that by inheriting your existing login (disable with
 | Addition | Default | What it does |
 |----------|:------:|--------------|
 | **Secure base settings** | on | Deny-reads on credential paths (`~/.ssh`, `~/.aws`, `.env`, keychains, crypto wallets, …); deny-**edit/write** on shell rc (`~/.zshrc`, `~/.bashrc`, … — blocks a persistence vector); `enableAllProjectMcpServers: false` (a cloned repo's `.mcp.json` can't auto-load untrusted MCP servers); telemetry/error-reporting/feedback off while **auto-update stays on** (see [Telemetry & updates](#telemetry--updates)); empty `attribution` (no auto Claude co-author). Deliberately **omits** `bypassPermissions` — you opt into risk yourself. |
-| **Web egress sanitizer** | on | `PreToolUse` guard on `WebSearch`/`WebFetch` **and outbound Bash commands**. Blocks queries/commands containing detected secrets (trufflehog, run local/detection-only — candidates are never sent to provider APIs for verification), Anthropic/AWS/GitHub/Slack token shapes, SSH-key fragments — and, if you configure them, your org's internal identifiers (which otherwise would never be checked on the Bash channel). Bash is **fast-gated**: only commands containing an outbound tool (`curl`/`wget`/`nc`/…, ~2% in real-world usage) are scanned — the other ~98% pay ~0 ms, so everyday commands feel nothing. Secrets passed as `$VAR` references aren't literal text and sail through; only pasted-literal secrets block. |
-| **command-guard** | on | `PreToolUse` guard on `Bash`. Denies credential exfil (key shape + outbound tool) and pipe-to-shell (`curl … \| bash`); alerts on `nc`/`socat`/`sendmail`/env-dump/inline-interpreter. **Requires `bun`** — skipped at install if absent. |
+| **leak-guard** | on | The always-on egress **floor** (pure bash + `jq`). `PreToolUse` guard on `WebSearch`/`WebFetch` **and outbound Bash commands**. Blocks queries/commands containing detected secrets (trufflehog, run local/detection-only — candidates are never sent to provider APIs for verification), Anthropic/AWS/GitHub/Slack/Stripe/OpenAI/webhook token shapes + SSH-key fragments (from the shared [`secret-patterns.json`](config/hooks/lib/secret-patterns.json)), pipe-to-shell (`… \| sh/bash/zsh`), and — if you configure them — your org's internal identifiers. Bash is **fast-gated**: only commands naming an outbound tool (`curl`/`wget`/`nc`/…, ~2% in real-world usage) are content-scanned — the other ~98% pay ~0 ms. Secrets passed as `$VAR` references aren't literal text and sail through; only pasted-literal values block. **Fails closed** if its pattern file is missing/corrupt. |
+| **command-guard** | on | The bun **enhancement** layer (typed detector). `PreToolUse` guard on `Bash`. Denies a credential *value* paired with an outbound tool (from the shared [`secret-patterns.json`](config/hooks/lib/secret-patterns.json)) and pipe-to-shell (`… \| sh/bash/zsh`); alerts on `nc`/`socat`/`sendmail`/env-dump/inline-interpreter. **Fails closed** on outbound if the pattern file is corrupt. **Requires `bun`** — when absent, leak-guard remains the floor (content + pipe-to-shell still enforced). |
 | **RTK command rewriting** | on | `PreToolUse` rewrite on `Bash`. Transparently rewrites `git`/`gh`/`cat`/`ls`/`npm`/`docker`/… to compact `rtk` equivalents for token savings — no `rtk init` needed (see [How RTK rewriting is wired](#how-rtk-rewriting-is-wired)). The rewritten command still goes through your normal permission rules — the hook never auto-approves anything. Because the rewrite changes the command string (`git status` → `rtk git status`), your existing allow rules stop matching it, so this addition also installs a **strictly read-only, evidence-based allowlist** ([`config/rtk-allowlist.json`](config/rtk-allowlist.json)): `rtk read`/`find`/`ls`/`diff`/`wc` plus the strictly local read-only `git` forms (`status`/`diff`/`log`/`show`/`branch`/`stash list`/`stash show`) — only forms with real production usage in the ~13K-command sample; nothing speculative. Mutating/**outbound** forms (`rtk curl`, `rtk aws`, `rtk git push`, and `rtk git fetch` — fetch contacts a remote) still prompt — deliberately **not** a blanket `Bash(rtk:*)`, which would amount to a general Bash allow since rtk fronts curl/aws/psql/docker. (`rtk find` is safe to allow: it rejects `-exec`/`-delete`.) The rewrite also **won't convert `cat`/`head` reads of credential paths** (`~/.ssh`, `.env`, `~/.aws`, …) into `rtk read` — that would slip them past the secure-settings `Read(...)` denies, so those stay as the original command and keep prompting/denying. **Inert until you install `rtk`** (self-skips if absent). |
 | **Responsive status line** | on | Width-adaptive status line: **repo + branch**, context, usage, and weather. Weather location auto-detects by IP (city-level); you can optionally **pin an exact location at install** (your entry is geocoded once via OpenStreetMap, only the resulting coordinates are stored locally — the text isn't kept and nothing is collected). Resolves its own config dir. |
 | **`/wrap-up` command** | on | End-of-session handoff that **prepares, doesn't auto-commit**: defers to repo conventions, summarizes, verifies (stops on failure), stages intentionally with a secret/artifact scan, **drafts** a conventional commit message for *you* to review and commit, surfaces loose ends. **Multi-user aware**: won't touch staged changes it didn't make, stops over an in-progress rebase/merge, won't stage files mixing this session's work with someone else's (proposes the `git add` commands instead), and on `main`/protected branches proposes a feature branch rather than committing there. Never commits, merges, or pushes unless asked. |
@@ -172,28 +172,41 @@ Catalog: [`config/additions.json`](config/additions.json).
 ## What the egress guards do and don't catch
 
 The two egress guards are **defense-in-depth, not a sandbox** — they raise the
-cost of an accidental leak, they don't make exfiltration impossible. Be honest
+cost of an accidental leak, they don't make exfiltration impossible. They're two
+layers: `leak-guard` is the always-on bash **floor**; `command-guard` is the bun
+**enhancement**. Both read one shared pattern source
+([`config/hooks/lib/secret-patterns.json`](config/hooks/lib/secret-patterns.json)
+— bash via `jq`, TypeScript via `JSON.parse`) and are checked by a single test
+corpus run against both, so their detection can't quietly drift apart. Be honest
 with yourself about the edges:
 
-- **The Bash scan is scoped to a fixed set of outbound tools.** Both the web-egress
-  sanitizer's fast gate and command-guard only inspect a command when it names
-  `curl`/`wget`/`nc`/`ncat`/`socat`/`fetch` or a literal `http://` URL. Commands
-  that egress by other means are **not scanned**: `ssh`/`scp`/`sftp`/`rsync`,
-  `git push` to a remote, `aws s3`, bash's `/dev/tcp` redirection, a language
-  runtime making the request itself (`python -c 'requests.post(…)'`,
-  `node -e`, `perl -e`), or an `https://` URL with no recognized tool name on the
-  line. A literal secret on any of those channels will pass. This is the
-  deliberate ~2%-scan tradeoff from design goal 2 — it keeps everyday commands at
-  ~0 ms — but it means the Bash guard is a backstop against careless paste-and-run,
-  not a containment boundary.
-- **Detection is heuristic and regex-based.** It catches *literal* secrets and
-  known token shapes; it does not catch base64/hex-encoded, split, or
-  `$VAR`-referenced secrets (the last is by design — a `$VAR` carries no literal
-  to scan). command-guard's pipe-to-shell check matches `… | sh|bash|zsh` but
-  not indirections like `… | sudo bash` or `curl -o /tmp/x && bash /tmp/x`.
-- **Both fail open.** A parse error, a missing `trufflehog` (Tier 1), or an
-  unhandled input shape results in *allow*, never a spurious block. That keeps the
-  hot path unbreakable at the cost of not being a hard gate.
+- **The content scan is scoped to a fixed set of outbound tools.** Both `leak-guard`'s
+  fast gate and `command-guard` only inspect a command for secret *content* when it
+  names `curl`/`wget`/`nc`/`ncat`/`socat`/`fetch`. Commands that egress by other
+  means are **not scanned**: `ssh`/`scp`/`sftp`/`rsync`, `git push` to a remote,
+  `aws s3`, bash's `/dev/tcp` redirection, a language runtime making the request
+  itself (`python -c 'requests.post(…)'`, `node -e`, `perl -e`), or a bare URL with
+  no recognized tool name on the line. A literal secret on any of those channels
+  will pass. This is the deliberate ~2%-scan tradeoff from design goal 2 — it keeps
+  everyday commands at ~0 ms — so the content scan is a backstop against careless
+  paste-and-run, not a containment boundary. (Pipe-to-shell, `… | sh|bash|zsh`, is
+  checked on **every** Bash command by **both** guards — so that protection survives
+  even when bun is absent.)
+- **Detection requires a real key value, and is heuristic.** A pattern fires only on
+  an actual key-*shaped* value, not a bare prefix or the mere words — so analysis
+  text that merely names a credential type passes. It does **not** catch
+  base64/hex-encoded, split, or `$VAR`-referenced secrets (the last by design — a
+  `$VAR` carries no literal to scan), nor indirections like `… | sudo bash` or
+  `curl -o /tmp/x && bash /tmp/x`.
+- **Fail behavior is closed where it counts.** If the shared pattern file is missing
+  or corrupt, the guards **fail closed** — they block the scannable subset (outbound
+  Bash + web egress) rather than silently allow, while still letting benign
+  non-outbound commands through; a bad `CT_EGRESS_PATTERNS` regex **warns loudly**
+  instead of degrading to allow. The remaining fail-*open* paths are the ones we
+  don't own and surface explicitly: a missing `trufflehog` (Tier 1) degrades to the
+  regex tiers with a warning, and `command-guard` failing to parse an unexpected input
+  shape allows it **loudly** — the bash floor already scanned the same call, so it's
+  not a silent hole.
 
 The sturdier controls are elsewhere: `permissions.deny` on credential paths
 (secure base settings), `enableAllProjectMcpServers: false`, and not running with
@@ -288,7 +301,7 @@ command:
 - **bun** (for **command-guard**) — offered via `brew`/`npm` when that addition
   is selected. (No `curl … | bash` auto-run — our own command-guard blocks
   pipe-to-shell; if you have neither brew nor npm, install from https://bun.sh/install.)
-- **trufflehog** (for **web-egress**, optional) — offered via `brew`; degrades to
+- **trufflehog** (for **leak-guard**, optional) — offered via `brew`; degrades to
   regex tiers without it.
 - **rtk** (for **RTK command rewriting**) — offered when that addition is selected:
   `brew install rtk`, else `cargo install --git`, else rtk's official installer
