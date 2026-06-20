@@ -620,6 +620,13 @@ setup_one_config() {
   local add='{}'
   is_selected secure-settings "$_sel_ids" && add="$(jq -s '.[0] * .[1]' <(printf '%s' "$add") "$CONFIG_SRC/settings.base.json")"
 
+  # Shared library the egress guards read (single source of truth for the
+  # secret/outbound patterns). Placed whenever either guard is selected, so both
+  # bash and TS resolve config/hooks/lib/secret-patterns.json relative to themselves.
+  if is_selected leak-guard "$_sel_ids" || is_selected command-guard "$_sel_ids"; then
+    place_dir "$CONFIG_SRC/hooks/lib" "$config_dir/hooks"
+  fi
+
   if is_selected leak-guard "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
     # Registered twice: web tools (always scanned) and Bash (fast-gated — only
