@@ -605,14 +605,32 @@ setup_one_config() {
   # text, and default) is driven ENTIRELY by config/additions.json so Path B
   # (this script) and Path A (agent-install.md) can't drift. Each addition's
   # bespoke build logic below is keyed on its id via is_selected.
-  isay ""
-  isay "Additions to layer on ${C_DIM}(Enter = default):${C_RST}"
   local _sel_ids=" " _aid _arec _aprompt _adef
-  while IFS=$'\t' read -r _aid _arec _aprompt; do
-    [ -z "$_aid" ] && continue
-    if [ "$_arec" = "true" ]; then _adef="Y"; else _adef="N"; fi
-    if confirm "  • ${_aprompt}" "$_adef"; then _sel_ids="${_sel_ids}${_aid} "; fi
-  done < <(jq -r '.additions[] | [.id, (.recommended|tostring), (.prompt // .name)] | @tsv' "$CONFIG_SRC/additions.json")
+  if [ -n "${CT_ADDITIONS+x}" ]; then
+    # Non-interactive explicit selection. $CT_ADDITIONS is a space-separated list of
+    # addition ids; install EXACTLY those (an empty value selects none) and skip the
+    # menu. Each id is validated against the manifest so a typo fails loudly instead
+    # of silently dropping an addition. Used by scriptable installs and the test
+    # suite (the menu reads /dev/tty, so answers can't be piped in).
+    local _known _i _want=()
+    _known="$(jq -r '.additions[].id' "$CONFIG_SRC/additions.json")"
+    read -ra _want <<<"$CT_ADDITIONS"
+    for ((_i=0; _i<${#_want[@]}; _i++)); do
+      _aid="${_want[$_i]}"
+      [ -z "$_aid" ] && continue
+      printf '%s\n' "$_known" | grep -qxF -- "$_aid" || die "CT_ADDITIONS: unknown addition id: $_aid"
+      _sel_ids="${_sel_ids}${_aid} "
+    done
+    isay "  ${C_DIM}Additions from \$CT_ADDITIONS:${C_RST}${_sel_ids}"
+  else
+    isay ""
+    isay "Additions to layer on ${C_DIM}(Enter = default):${C_RST}"
+    while IFS=$'\t' read -r _aid _arec _aprompt; do
+      [ -z "$_aid" ] && continue
+      if [ "$_arec" = "true" ]; then _adef="Y"; else _adef="N"; fi
+      if confirm "  • ${_aprompt}" "$_adef"; then _sel_ids="${_sel_ids}${_aid} "; fi
+    done < <(jq -r '.additions[] | [.id, (.recommended|tostring), (.prompt // .name)] | @tsv' "$CONFIG_SRC/additions.json")
+  fi
 
   # ── build ──
   mkdir -p "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows"
@@ -806,7 +824,12 @@ setup_one_config() {
   # version's set), without ever touching rules they added themselves.
   reconcile_managed_perms "$existing" "$add"
   existing="$RECON_EXISTING"; add="$RECON_ADD"
-  if [ "$add" != "{}" ] || [ "$existing" != "{}" ]; then
+  # Write when there's something to write OR a settings.json already exists — the
+  # latter so deselecting the LAST settings-contributing addition (merge result
+  # back to {}) actually persists; otherwise the empty merge is skipped and the
+  # just-"uninstalled" registrations survive on disk. Still no empty file is
+  # created on a fresh install that selected nothing.
+  if [ "$add" != "{}" ] || [ "$existing" != "{}" ] || [ -f "$config_dir/settings.json" ]; then
     merge_settings "$existing" "$add" > "$config_dir/settings.json.tmp"
     mv "$config_dir/settings.json.tmp" "$config_dir/settings.json"
     ok "Wrote $config_dir/settings.json"
