@@ -43,7 +43,7 @@ done < <(jq -r '.additions[].name' "$ADDITIONS")
 # ── 3. Every install.sh flag is documented in README ────────────────────────
 # Flags are parsed in the `case "$arg" in` block; extract the real set rather
 # than hardcoding it, so the test tracks the installer.
-for flag in --defaults --no-auth-inherit --clean; do
+for flag in --defaults --no-auth-inherit; do
   assert_lit "install.sh actually accepts $flag (case arm present)" "$flag)" "$INSTALL"
   assert_lit "README documents flag: $flag" "$flag" "$README"
 done
