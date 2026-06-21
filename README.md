@@ -326,7 +326,9 @@ command:
 ```
 aka-claude-tools/
 ├── agent-install.md            # Path A — spec your Claude Code instance executes
+├── agent-uninstall.md          # agent-driven teardown — delegates to uninstall.sh
 ├── install.sh                  # Path B — terminal installer
+├── uninstall.sh                # one-shot teardown (env-isolated, marker-based)
 ├── config/                     # the payload layered into a profile
 │   ├── settings.base.json      # secure base settings
 │   ├── rtk-allowlist.json      # read-only rtk allow rules (with RTK rewriting)
@@ -367,7 +369,36 @@ config has MCP servers or `@`-imports the script can't reason about.)
 
 ## Uninstall
 
-Delete the config folder (`rm -rf ~/.claude-aka`) and remove the
+Run the one-shot uninstaller:
+
+```sh
+./uninstall.sh                      # discover installed profiles and pick one
+./uninstall.sh ~/.claude-work       # or name the profile directly
+# add --yes to skip the confirmation
+```
+
+With no argument it scans the managed alias blocks in your shell rc and lets you
+**pick which profile to remove** (a lone one is preselected); name a path
+explicitly to skip the prompt. It removes the config folder **and** every managed
+alias block the kit wrote for that profile — matched by our
+`# >>> aka-claude-tools managed: … >>>` markers and the dir they point at, so it
+finds them whatever the alias was named and never touches blocks for other
+profiles or anything outside our markers.
+
+Because it's a destructive `rm -rf`, it is deliberately strict about its target:
+it **never** reads the ambient `$CLAUDE_CONFIG_DIR` as the dir to delete (it's
+used only to **refuse** removing the profile the current session is running inside,
+which is also excluded from the pick-list), `--yes` won't guess between several
+discovered profiles, and removing the default `~/.claude` always requires an
+interactive confirmation. Prefer running it from a plain shell.
+
+From inside an authenticated session you can instead ask Claude to
+`Read agent-uninstall.md and remove my <name> profile` — it audits what's
+irreplaceable, offers a backup, then delegates the actual removal to `uninstall.sh`
+(so the same guards apply). It will not remove the profile the current session is
+running in — run that from a plain shell.
+
+Or do it by hand: `rm -rf ~/.claude-aka` and delete the
 `# >>> aka-claude-tools managed: <alias> >>>` block from your shell rc. Your default
 `~/.claude` is never touched by the installer.
 
