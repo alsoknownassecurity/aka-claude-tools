@@ -14,11 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # bun is a real dependency of the command-guard hook (a .ts file): install.sh
+      # only deploys+registers it when bun is present, so CI needs bun to exercise
+      # the full recommended install the flow suite asserts.
+      - uses: oven-sh/setup-bun@v2
       - name: tool versions
         run: |
           bash --version | head -1
           jq --version
           git --version
+          bun --version
       - name: run the flow suite
         # Sandboxed (fake $HOME, throwaway clones) — touches no real profile.
         # Exercises: install.sh forward deploy + path remap, additions.json
