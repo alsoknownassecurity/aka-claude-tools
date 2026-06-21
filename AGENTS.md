@@ -29,6 +29,10 @@ self-hosted repos. Here `main` is protected by convention:
 
 ## Before you open a PR
 
+- `tests/run.sh` — the flow suite (sandboxed: fake `$HOME`, throwaway clones,
+  never touches a real profile). It checks `install.sh` deploys with the path
+  remap, `additions.json` manifest integrity (no missing/orphan files), and the
+  `tools/promote.sh` reverse round-trip + leak guard. CI runs it on every PR.
 - `bash -n install.sh shared/lib/common.sh` — syntax-clean. The installer runs
   under `#!/usr/bin/env bash`; **verify under bash, not zsh** (`for x in $var`
   word-splits in bash but not zsh, which will silently fool a hand test).

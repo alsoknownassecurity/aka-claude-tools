@@ -9,8 +9,10 @@ break for an existing profile on upgrade? -->
 
 ## Verification
 
+- [ ] `tests/run.sh` passes (the flow suite — also enforced in CI)
 - [ ] `bash -n install.sh shared/lib/common.sh` passes
 - [ ] Exercised the changed paths in a sandbox (`mktemp -d` config dir, not `~/.claude*`)
+- [ ] If you added/changed an addition, `config/additions.json` is updated to match
 - [ ] No unrelated changes bundled in
 - [ ] Conventional commit title (`feat:` / `fix:` / `docs:` / `chore:`)
 

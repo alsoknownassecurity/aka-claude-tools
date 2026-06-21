@@ -1,0 +1,11 @@
+# tools/leak-patterns.local.example — copy to tools/leak-patterns.local (which is
+# gitignored) and fill in YOUR operator-specific identifiers. One extended-regex
+# per line; '#' comments and blank lines are ignored. These are the strings that
+# must never reach the public repo but are too specific to commit here.
+#
+# Examples (replace with your own — do NOT commit real values):
+#   your-name
+#   you@example\.com
+#   your-tailnet-name\.ts\.net
+#   your-private-git-namespace
+#   /Users/yourusername
