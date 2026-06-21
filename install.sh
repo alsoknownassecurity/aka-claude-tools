@@ -722,10 +722,6 @@ setup_one_config() {
   if is_selected wrap-up "$_sel_ids"; then
     place_file "$CONFIG_SRC/commands/wrap-up.md" "$config_dir/commands"
   fi
-  if is_selected loop-designer "$_sel_ids"; then
-    place_dir "$CONFIG_SRC/skills/loop-designer" "$config_dir/skills"
-    ok "Placed loop-designer skill"
-  fi
   if is_selected shell-audit "$_sel_ids"; then
     place_dir "$CONFIG_SRC/skills/shell-audit" "$config_dir/skills"
     chmod +x "$config_dir/skills/shell-audit/audit.sh" 2>/dev/null || true
@@ -772,6 +768,17 @@ setup_one_config() {
     fi
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
+
+  # 4d-pre1b. Clean RETIRED additions — whole additions the kit shipped before and
+  # has since dropped from additions.json. The loop above only iterates ids STILL
+  # in the manifest, so a fully-removed addition's files would orphan in an existing
+  # profile; config/managed-permissions.json (.retiredAdditions[].paths) tombstones
+  # their owned paths. Skills/commands only (idempotent rm); retired HOOKS self-clean
+  # via the managed marker in 4d-pre2 below.
+  while IFS= read -r _rp; do
+    [ -n "$_rp" ] || continue
+    [ -e "$config_dir/$_rp" ] && { rm -rf "$config_dir/$_rp"; ok "Removed retired addition file: ${_rp}"; }
+  done < <(jq -r '.retiredAdditions // [] | .[] | .paths[]?' "$CONFIG_SRC/managed-permissions.json" 2>/dev/null)
 
   # 4d-pre2. Self-clean stale kit hooks. Every shipped hook carries a managed
   # marker (aka-claude-tools:managed-hook). Any marked hook in the profile that

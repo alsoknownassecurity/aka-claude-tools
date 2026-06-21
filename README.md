@@ -18,9 +18,8 @@ give you:
 - **Per-context profiles you launch by name.** A work profile, a throwaway
   profile, a locked-down profile — each its own folder, each its own alias.
 - **A small set of genuinely useful additions** layered onto any profile:
-  secure defaults, two-layer egress guards (web queries + outbound Bash), a responsive status line, a
-  repo-agnostic `/wrap-up` command, and a loop-designer skill that compiles a
-  spec into a minimal autonomous-run kickoff prompt.
+  secure defaults, two-layer egress guards (web queries + outbound Bash), a responsive status line, and a
+  repo-agnostic `/wrap-up` command.
 
 The default profile the installer offers is `~/.claude-aka`, launched with the
 alias **`aka`**.
@@ -164,7 +163,6 @@ saves you from that by inheriting your existing login (disable with
 | **RTK command rewriting** | on | `PreToolUse` rewrite on `Bash`. Transparently rewrites `git`/`gh`/`cat`/`ls`/`npm`/`docker`/… to compact `rtk` equivalents for token savings — no `rtk init` needed (see [How RTK rewriting is wired](#how-rtk-rewriting-is-wired)). The rewritten command still goes through your normal permission rules — the hook never auto-approves anything. Because the rewrite changes the command string (`git status` → `rtk git status`), your existing allow rules stop matching it, so this addition also installs a **strictly read-only, evidence-based allowlist** ([`config/rtk-allowlist.json`](config/rtk-allowlist.json)): `rtk read`/`find`/`ls`/`diff`/`wc` plus the strictly local read-only `git` forms (`status`/`diff`/`log`/`show`/`branch`/`stash list`/`stash show`) — only forms with real production usage in the ~13K-command sample; nothing speculative. Mutating/**outbound** forms (`rtk curl`, `rtk aws`, `rtk git push`, and `rtk git fetch` — fetch contacts a remote) still prompt — deliberately **not** a blanket `Bash(rtk:*)`, which would amount to a general Bash allow since rtk fronts curl/aws/psql/docker. (`rtk find` is safe to allow: it rejects `-exec`/`-delete`.) The rewrite also **won't convert `cat`/`head` reads of credential paths** (`~/.ssh`, `.env`, `~/.aws`, …) into `rtk read` — that would slip them past the secure-settings `Read(...)` denies, so those stay as the original command and keep prompting/denying. **Inert until you install `rtk`** (self-skips if absent). |
 | **Responsive status line** | on | Width-adaptive status line: **repo + branch**, context, usage, and weather. Weather location auto-detects by IP (city-level); you can optionally **pin an exact location at install** (your entry is geocoded once via OpenStreetMap, only the resulting coordinates are stored locally — the text isn't kept and nothing is collected). Resolves its own config dir. |
 | **`/wrap-up` command** | on | End-of-session handoff that **prepares, doesn't auto-commit**: defers to repo conventions, summarizes, verifies (stops on failure), stages intentionally with a secret/artifact scan, **drafts** a conventional commit message for *you* to review and commit, surfaces loose ends. **Multi-user aware**: won't touch staged changes it didn't make, stops over an in-progress rebase/merge, won't stage files mixing this session's work with someone else's (proposes the `git add` commands instead), and on `main`/protected branches proposes a feature branch rather than committing there. Never commits, merges, or pushes unless asked. |
-| **loop-designer skill** | on | Compiles a finished spec/plan — any doc with verifiable acceptance criteria, constraints, and human approval gates — into the **smallest kickoff prompt that runs it well** in a fresh orchestrator session: a ~7-line must-have discipline core (verify-yourself, context hygiene, don't self-sign gates) plus an evidence-based catalog of opt-in guardrails distilled from real multi-hour autonomous runs. Also persists the result to a canonical `EXECUTION-PROMPT.md` (provenance-stamped, staleness-guarded) and includes a **Harden** mode that slims over-specified hand-written kickoff prompts. Pure skill files — no hooks, no runtime cost. |
 | **Harness pointer** | off | `PreToolUse` guard on `Bash` that intercepts org-configured commands and points the agent to the right approach for your environment (e.g. `gh` → `git` on a self-hosted VCS). Guidance, not a security boundary. Ships **disabled and empty** — most people want every CLI. |
 
 Catalog: [`config/additions.json`](config/additions.json).
@@ -320,7 +318,7 @@ aka-claude-tools/
 │   ├── hooks/                  # leak-guard, command-guard (bun),
 │   │                           #   rtk-safe (rtk), statusline, harness-pointer
 │   ├── commands/wrap-up.md
-│   └── skills/loop-designer/   # spec → minimal autonomous-run kickoff prompt
+│   └── skills/shell-audit/     # shell startup-file security audit
 └── shared/
     ├── aka-claude-tools.config.example
     └── lib/common.sh           # installer helpers
