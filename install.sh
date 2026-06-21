@@ -880,11 +880,22 @@ setup_one_config() {
 }
 
 # ── main loop ────────────────────────────────────────────────────────────────
-setup_one_config
-while confirm "Set up another config folder?" "N"; do
+ct_main() {
   setup_one_config
-done
+  while confirm "Set up another config folder?" "N"; do
+    setup_one_config
+  done
 
-say ""
-hr
-ok "Done. ${C_DIM}Re-run ./install.sh any time to add or update a config.${C_RST}"
+  say ""
+  hr
+  ok "Done. ${C_DIM}Re-run ./install.sh any time to add or update a config.${C_RST}"
+}
+
+# Run the installer only when EXECUTED, not when SOURCED. Sourcing the script (with
+# its top-level definitions) lets the test suite reach the pure helpers above
+# (merge_settings, prune_hook_regs, the rollback handler) without performing an
+# install. Tests source inside a subshell so the top-level `set -euo`/traps stay
+# contained. A normal `./install.sh` is unaffected.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  ct_main
+fi
