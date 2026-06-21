@@ -1,0 +1,19 @@
+# audit-allow.txt — exact, known-FAKE secret-shaped strings that legitimately
+# live in this repo (the egress-guard test corpus, tests/corpus.json). The
+# pre-publish gate (tools/audit-history.sh) diffs the secret-shaped TOKENS it
+# finds in history against this list: a shaped value NOT listed here FAILs the
+# gate (a real leak, or a new un-vetted fixture); a listed value is suppressed.
+#
+# VALUE-pinned, not path-scoped: this also covers commit messages and survives
+# corpus renames, and — because the gate compares extracted tokens, not whole
+# lines — a real secret that shares a line with one of these is still caught.
+#
+# Rules: one exact literal per line; '#' comments and blank lines ignored. Add a
+# line ONLY when you add a new fake fixture to the corpus; never add a real value.
+# Only shapes matched by leak-lib.sh $LEAK_SECRETS need listing (Stripe/OpenAI/
+# webhook shapes aren't in that set, so their corpus fakes don't reach the gate).
+-----BEGIN RSA PRIVATE KEY-----
+AKIAIOSFODNN7EXAMPLE
+ghp_0123456789abcdefghij0123456789ABCD
+sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaa
+xoxb-1234567890-abcdefghij
