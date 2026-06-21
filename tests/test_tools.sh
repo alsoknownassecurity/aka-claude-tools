@@ -43,6 +43,21 @@ msgrepo="$(sandbox)/msg"; git init -q "$msgrepo"
 echo ok > "$msgrepo/f"; gitc "$msgrepo" add .; gitc "$msgrepo" commit -qm "add key $ANT"
 assert_fail "audit FAILS on a secret in a commit message" "$AR" --repo "$msgrepo" --ref HEAD
 
+# ── audit-history allowlist (tests/audit-allow.txt) — value-pinned suppression ──
+REAL="AKIA""1234567890ABCDEF"          # a DIFFERENT AWS-shaped value, NOT a known fake
+# (a) an allowlisted fake alone → suppressed → PASS.
+alw="$(sandbox)/alw"; git init -q "$alw"; mkdir -p "$alw/tests"
+printf '%s\n' "$AWS" > "$alw/tests/audit-allow.txt"
+printf 'fixture=%s\n' "$AWS" > "$alw/corpus.txt"; gitc "$alw" add .; gitc "$alw" commit -qm init
+assert_ok "audit PASSES when the only shaped value is allowlisted" "$AR" --repo "$alw" --ref HEAD
+# (b) THE GUARANTEE: a real secret sharing a LINE with an allowlisted fake is still
+#     caught — suppression is token-level, not line-level.
+hide="$(sandbox)/hide"; git init -q "$hide"; mkdir -p "$hide/tests"
+printf '%s\n' "$AWS" > "$hide/tests/audit-allow.txt"
+printf 'fake=%s real=%s\n' "$AWS" "$REAL" > "$hide/data.txt"; gitc "$hide" add .; gitc "$hide" commit -qm init
+assert_fail "allowlisted fake does NOT shield a real secret on the same line" "$AR" --repo "$hide" --ref HEAD
+assert_lit "the un-allowlisted value is named in the FAIL" "$REAL" <("$AR" --repo "$hide" --ref HEAD 2>&1; true)
+
 # ── graduate.sh: argument validation guards before touching any repo ─────────
 assert_ok   "graduate --help exits 0" bash -c "AKA_PUBLIC=/nope AKA_DEV=/nope '$GR' --help"
 assert_fail "graduate requires --branch" bash -c "AKA_PUBLIC=/nope AKA_DEV=/nope '$GR'"
