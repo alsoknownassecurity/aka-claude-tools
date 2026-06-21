@@ -10,11 +10,17 @@
 REPO_ROOT="$(git -C "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" rev-parse --show-toplevel)"
 ADDITIONS="$REPO_ROOT/config/additions.json"
 
-_PASS=0 ; _FAIL=0 ; _SANDBOXES=()
+_PASS=0 ; _FAIL=0
+# One per-process sandbox root, created in THIS shell (NOT a subshell). A previous
+# sandbox() appended each dir to an array, but the common `d="$(sandbox)"` call runs
+# sandbox() inside command substitution, so that array mutation was lost and the dir
+# leaked. Rooting every sandbox under one dir made here and removing it wholesale on
+# exit is subshell-proof. `mktemp -d <template>` is portable (BSD + GNU).
+_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aka-tests.XXXXXX")"
 trap '_t_cleanup' EXIT
-_t_cleanup() { local d; for d in "${_SANDBOXES[@]:-}"; do [ -n "${d:-}" ] && rm -rf "$d"; done; }
+_t_cleanup() { [ -n "${_SANDBOX_ROOT:-}" ] && rm -rf "$_SANDBOX_ROOT"; }
 
-sandbox() { local d; d="$(mktemp -d)"; _SANDBOXES+=("$d"); printf '%s' "$d"; }
+sandbox() { mktemp -d "$_SANDBOX_ROOT/sbx.XXXXXX"; }
 
 pass() { _PASS=$((_PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { _FAIL=$((_FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; [ -n "${2:-}" ] && printf '      └ %s\n' "$2" >&2; }
@@ -25,10 +31,16 @@ assert_ok()   { local d="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$d"; el
 assert_fail() { local d="$1"; shift; if "$@" >/dev/null 2>&1; then fail "$d" "expected non-zero from: $*"; else pass "$d"; fi; }
 # assert_file "desc" path     → pass if path exists
 assert_file() { [ -e "$2" ] && pass "$1" || fail "$1" "missing: $2"; }
-# assert_grep "desc" pattern file
+# assert_grep "desc" pattern file  (REGEX — grep -E)
 assert_grep() { grep -qE "$2" "$3" 2>/dev/null && pass "$1" || fail "$1" "pattern '$2' not in $3"; }
-# assert_ngrep "desc" pattern file → pattern must be ABSENT
+# assert_ngrep "desc" pattern file → REGEX pattern must be ABSENT
 assert_ngrep(){ grep -qE "$2" "$3" 2>/dev/null && fail "$1" "pattern '$2' unexpectedly in $3" || pass "$1"; }
+# assert_lit  "desc" literal file → LITERAL substring present (grep -F). Use for
+# filesystem paths / hook commands / JSON fragments that contain regex metachars
+# (. [ ] ( ) + /) so they aren't silently mis-matched as a regex.
+assert_lit()  { grep -qF -- "$2" "$3" 2>/dev/null && pass "$1" || fail "$1" "literal '$2' not in $3"; }
+# assert_nlit "desc" literal file → LITERAL substring must be ABSENT
+assert_nlit() { grep -qF -- "$2" "$3" 2>/dev/null && fail "$1" "literal '$2' unexpectedly in $3" || pass "$1"; }
 # assert_eq "desc" expected actual
 assert_eq()   { [ "$2" = "$3" ] && pass "$1" || fail "$1" "expected '$2', got '$3'"; }
 
