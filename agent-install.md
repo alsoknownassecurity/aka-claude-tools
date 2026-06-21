@@ -1,11 +1,18 @@
 # Install a aka-claude-tools profile — driven by your Claude Code instance
 
 **You (Claude) are setting up a new isolated Claude Code config profile for the
-user, from inside their already-authenticated session.** This path is an
-intelligent alternative to `install.sh`: you can read the whole existing config,
-reason about dependencies, and migrate cleanly where a static shell script would
-miss rough edges. The user is already authenticated, so there is no token/login
-dance to perform.
+user, from inside their already-authenticated session.** You **own the judgment**
+— read the whole existing config, reason about dependencies, and migrate cleanly
+where a static script would miss rough edges — and you **delegate the deterministic
+mechanics to `install.sh`**, the repeatable engine: `./install.sh --apply` layers
+the additions, `./install.sh --alias` creates the launcher alias. The user is
+already authenticated, so there is no token/login dance.
+
+**Do not write the user's shell rc yourself.** Creating the alias means editing
+`~/.zshrc` / `~/.bashrc`, which the `startup-write-guard` and `command-guard`
+additions block (an agent writing to startup files is a persistence vector). Always
+create the alias by invoking `./install.sh --alias` — install.sh is the sole
+sanctioned rc writer — never with an `echo >> ~/.zshrc` or an Edit of the rc.
 
 Work through the steps below. **Confirm the plan before executing, and verify
 after.** Never touch the user's default `~/.claude` config.
@@ -75,36 +82,15 @@ the user's go-ahead.
   references the OLD config dir — hook `command`s, `statusLine.command`, absolute
   globs — rewrite `<old config dir>` → `<new config dir>`. Don't miss non-hook
   absolute paths.
-- **Merge settings**: start from the user's settings (if migrating it), then
-  layer the selected additions from this repo's `config/` (their hook paths must
-  point at the NEW dir). When merging arrays, **union** `permissions.deny/allow/ask`
-  and the `hooks.*` event arrays — never drop the user's existing entries. The
-  result must be **one valid JSON document**.
-  - **Strip maintainer comments**: the addition files (`config/settings.base.json`,
-    `config/rtk-allowlist.json`) carry a top-level `"$comment"` array of notes for
-    maintainers. Drop it — never write `"$comment"` into the profile's
-    `settings.json` (Claude Code would flag it as an unknown key).
-- **Reconcile retired permission rules (upgrade/re-install)**: a plain union can
-  *add* rules but never *remove* one the kit has dropped, so an existing profile
-  would keep stale denies forever. When the target already has a `settings.json`
-  (or you're migrating one), reconcile against this repo's
-  `config/managed-permissions.json` (`.retired.deny/allow/ask`):
-  - **New rules** in the selected additions but not in the profile → **adopt by
-    default**.
-  - **Rules listed in `.retired[]`** that are present in the profile but no longer
-    in the current additions → these are rules the kit shipped before and has since
-    dropped → **retire (remove) by default**.
-  - **Any rule the kit never shipped** (not in the current additions and not in
-    `.retired[]`) is the **user's own** → **always keep it**, untouched.
-  - Show the user the per-rule diff (what will be adopted, what will be retired)
-    and let them override individually; the default is to adopt this version's set.
-    Apply the choices, then produce the final unioned document.
-- **Dangerous modes are the user's call**: if the migrated settings enable
-  `permissions.defaultMode: bypassPermissions` or the skip-prompt flags
-  (`skipDangerousModePermissionPrompt`, `skipAutoPermissionPrompt`), do NOT
-  strip them. Tell the user these are on (Claude runs without permission
-  prompts by default) and offer to turn them off — keep their setting unless
-  they say so. This kit's own template never adds these.
+- **Stage the migrated settings** (don't hand-merge the additions): if you're
+  migrating the user's `settings.json`, copy it into `<dir>` first (with the
+  OLD→NEW path rewrites above). The engine layers the additions onto it next.
+  - **Dangerous modes are the user's call**: if the migrated settings enable
+    `permissions.defaultMode: bypassPermissions` or the skip-prompt flags
+    (`skipDangerousModePermissionPrompt`, `skipAutoPermissionPrompt`), do NOT
+    strip them. Tell the user these are on (Claude runs without permission prompts
+    by default) and offer to turn them off — keep their setting unless they say so.
+    This kit's own template never adds these.
 - **Session history (opt-in):** ask the user whether to also migrate their
   session history — `history.jsonl`, `projects/`, `sessions/`, and `todos/`/`tasks/`
   (past conversations, input history, todo state). **Off by default**; copy these
@@ -112,25 +98,23 @@ the user's go-ahead.
   secret-prone state: `.credentials.json`, `shell-snapshots/`, `session-env/`,
   `paste-cache/`, `file-history/`, `telemetry/` — those can capture exported tokens
   or pasted/edited secrets.
-- If a config-driven hook (leak-guard / harness-pointer) is enabled, copy
-  `shared/aka-claude-tools.config.example` → `<dir>/aka-claude-tools.config`.
-- **leak-guard (if selected):** register it TWICE in
-  `hooks.PreToolUse` — once with matcher `WebSearch|WebFetch` and once with
-  matcher `Bash` (the script self-gates: Bash commands without an outbound tool
-  exit immediately).
-- **command-guard (if selected):** requires `bun` — skip it (and say so) if
-  `bun` isn't installed. Register the hook command as
-  `<absolute path to bun> <dir>/hooks/command-guard.ts` — hook subshells may
-  not have `bun` on PATH, so a bare shebang can silently fail to launch.
-- **rtk-safe (if selected):** also merge `config/rtk-allowlist.json` into
-  the profile's `permissions.allow` (union, never replace). It contains only
-  strictly read-only `rtk` forms; do NOT widen it to `Bash(rtk:*)` — rtk fronts
-  curl/aws/psql/docker, so a blanket prefix is effectively a general Bash allow.
-- **startup-write-guard (if selected):** a plain `hooks.PreToolUse` Bash
-  registration of `<dir>/hooks/startup-write-guard.sh` — no special handling.
-- **shell-audit (if selected):** copied as a skill dir (per the skills rule
-  above); also `chmod +x <dir>/skills/shell-audit/audit.sh` so the skill can run
-  the bundled auditor.
+- **Layer the additions with the engine — do NOT hand-roll the settings merge or
+  hook registrations.** Run:
+  ```
+  CT_CONFIG_DIR="<dir>" CT_ADDITIONS="<space-separated addition ids>" ./install.sh --apply
+  ```
+  This is the deterministic, idempotent, re-runnable mechanics. It places every
+  selected addition's files and **unions their settings onto the `settings.json`
+  already in `<dir>`** (the one you migrated), then handles every detail you'd
+  otherwise get wrong by hand: strips `"$comment"`; reconciles retired permissions
+  against `config/managed-permissions.json` (adopt new / retire dropped / keep the
+  user's own); registers leak-guard **twice** (`WebSearch|WebFetch` + `Bash`);
+  registers command-guard with bun's **absolute** path (skipped with a notice if `bun`
+  is absent); merges the read-only `rtk-allowlist.json` for rtk-safe (never a
+  blanket `Bash(rtk:*)`); registers startup-write-guard; copies the shell-audit
+  skill and chmods its `audit.sh`; and seeds `aka-claude-tools.config` when a
+  config-driven hook is selected. **You own the judgment** (which additions, what to
+  migrate); the **engine owns the mechanics**.
 - **Statusline location (if the statusline is enabled):** offer to pin an exact
   location for weather (default: auto-detect by IP, city-level). Make clear that
   nothing is saved or collected — if they give a city/address, geocode it once
@@ -150,30 +134,22 @@ the user's go-ahead.
   - `~/.claude/.credentials.json` present (Linux/file-based) → copy it in.
   - macOS Keychain → can't migrate (keyed per config dir); tell the user they'll
     `/login` once on first launch, or `claude setup-token` to cover all profiles.
-- **Alias**: **review the user's existing aliases before adding one.** Read the
-  shell rc *and every file it sources, recursively* (e.g. `~/.zshrc` →
-  `~/docs/shared/zshrc-aliases.sh` → …) and check whether `<alias>` is already
-  defined anywhere:
-  - **Already resolves to THIS config dir** (e.g. a fleet-wide aliases file
-    defines it): do **not** add a duplicate. If a stale `aka-claude-tools managed`
-    block for it exists, remove that block so there's a single definition. Tell
-    the user it's already covered.
-  - **Resolves to a DIFFERENT target** (another profile, or a non-launcher alias):
-    don't shadow it. Surface the existing definition and its source file, and
-    propose a different alias name (or skip the alias and give the user the
-    `CLAUDE_CONFIG_DIR="<dir>" claude` invocation).
-  - **Name is free**: add it to the rc inside an idempotent managed block:
-    ```
-    # >>> aka-claude-tools managed: <alias> >>>
-    alias <alias>='CLAUDE_CONFIG_DIR="<dir>" claude'
-    # <<< aka-claude-tools managed: <alias> <<<
-    ```
-    Replace the block if one with the same alias already exists.
+- **Alias — create it with the engine, NEVER by editing the rc yourself.** Run:
+  ```
+  CT_CONFIG_DIR="<dir>" CT_ALIAS="<alias>" ./install.sh --alias
+  ```
+  install.sh is the sole sanctioned rc writer (see the top of this file): it
+  reviews the rc *and every file it sources, recursively* (cycle-safe), then writes
+  an **idempotent** managed block — re-running never duplicates, and each
+  aka-managed profile keeps its own block. Handle its outcome:
+  - **exit 0** — the alias is set (or already resolved to this dir, deduped). Done.
+  - **non-zero exit** — `<alias>` is already taken by a **different** target;
+    install.sh left it untouched. Pick another name and re-invoke, or skip the
+    alias and give the user the `CLAUDE_CONFIG_DIR="<dir>" claude` invocation.
 
-  (The shell installer already does this via `alias_target_elsewhere`, which
-  walks the full `source` chain with a cycle guard; as the agent, do the same
-  review and additionally reason about ambiguous cases — e.g. an alias built from
-  a variable, or one defined inside a conditional.)
+  Do **not** add the alias with `echo >> ~/.zshrc` or by editing the rc with the
+  Edit tool — the `startup-write-guard` / `command-guard` additions block an agent
+  writing to startup files, by design. Routing through `--alias` is the only path.
 
 ## 5. Verify, then report
 
