@@ -620,6 +620,13 @@ setup_one_config() {
   local add='{}'
   is_selected secure-settings "$_sel_ids" && add="$(jq -s '.[0] * .[1]' <(printf '%s' "$add") "$CONFIG_SRC/settings.base.json")"
 
+  # Shared library the egress guards read (single source of truth for the
+  # secret/outbound patterns). Placed whenever either guard is selected, so both
+  # bash and TS resolve config/hooks/lib/secret-patterns.json relative to themselves.
+  if is_selected leak-guard "$_sel_ids" || is_selected command-guard "$_sel_ids"; then
+    place_dir "$CONFIG_SRC/hooks/lib" "$config_dir/hooks"
+  fi
+
   if is_selected leak-guard "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
     # Registered twice: web tools (always scanned) and Bash (fast-gated — only
@@ -636,7 +643,13 @@ setup_one_config() {
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
   fi
   if is_selected command-guard "$_sel_ids"; then
-    ensure_dep bun "bun (command-guard)" 0 || true
+    # bun is the runtime for command-guard, so it is a hard dependency of THIS addition.
+    # Selecting command-guard offers to install bun (interactive, default yes). If it
+    # ends up absent (declined / no package manager / non-interactive), command-guard
+    # is NOT registered and we say so LOUDLY — a security guard quietly skipped is
+    # worse than a noisy one. The leak-guard floor still enforces secret content +
+    # pipe-to-shell; what's lost is command-guard's precise key+outbound-tool pairing.
+    ensure_dep bun "bun — runtime required by the command-guard egress hook" 0 || true
     local bun_bin; bun_bin="$(command -v bun 2>/dev/null || true)"
     if [ -n "$bun_bin" ]; then
       place_file "$CONFIG_SRC/hooks/command-guard.ts" "$config_dir/hooks" +x
@@ -645,8 +658,12 @@ setup_one_config() {
       # silently fail to launch and the guard would be a no-op.
       add="$(jq --arg cmd "$bun_bin $config_dir/hooks/command-guard.ts" \
         '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
+      ok "command-guard enabled (bun: $bun_bin)"
     else
-      warn "command-guard skipped — needs bun (not found). Install bun and re-run to enable."
+      warn "⚠ command-guard NOT enabled — its runtime 'bun' is missing, so the enhanced Bash"
+      warn "  credential-exfil guard will not run. The leak-guard floor still covers secret"
+      warn "  content + pipe-to-shell; install bun (https://bun.sh/install) and re-run to add"
+      warn "  command-guard's precise key+outbound-tool detection."
     fi
   fi
   if is_selected rtk-safe "$_sel_ids"; then
