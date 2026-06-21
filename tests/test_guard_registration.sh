@@ -28,8 +28,10 @@ assert_file "shared hooks/lib placed" "$PROFILE/hooks/lib"
 if command -v bun >/dev/null 2>&1; then
   cmd="$(jq -r '.hooks.PreToolUse[].hooks[].command | select(endswith("/command-guard.ts"))' "$S")"
   [ -n "$cmd" ] && pass "command-guard registered (bun present)" || fail "command-guard registered (bun present)" "no command-guard.ts registration"
-  [ "${cmd:0:1}" = "/" ] && pass "command-guard uses an absolute interpreter path" || fail "command-guard uses an absolute interpreter path" "not absolute: $cmd"
-  case "$cmd" in *"bun "*) pass "command-guard launched via bun" ;; *) fail "command-guard launched via bun" "no 'bun' in: $cmd" ;; esac
+  # The interpreter is invoked by ABSOLUTE path (shell-quoted, so a config dir
+  # with spaces is safe): the command starts with `/` or `'/`.
+  case "$cmd" in /*|\'/*) pass "command-guard uses an absolute interpreter path" ;; *) fail "command-guard uses an absolute interpreter path" "not absolute: $cmd" ;; esac
+  case "$cmd" in *bun*command-guard.ts) pass "command-guard launched via bun" ;; *) fail "command-guard launched via bun" "no 'bun' in: $cmd" ;; esac
 else
   pass "bun absent — command-guard registration shape skipped (per installer contract)"
 fi
