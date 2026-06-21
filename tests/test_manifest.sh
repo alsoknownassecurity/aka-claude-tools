@@ -24,6 +24,9 @@ for cat in skills hooks commands; do
   [ -d "$REPO_ROOT/config/$cat" ] || continue
   for entry in "$REPO_ROOT/config/$cat"/*; do
     [ -e "$entry" ] || continue
+    # Shared support dirs (e.g. hooks/lib — the guards' secret-patterns corpus)
+    # back addons but aren't deployable additions themselves; skip them.
+    [ "$(basename "$entry")" = "lib" ] && continue
     rel="$cat/$(basename "$entry")"
     if printf '%s\n' "$declared" | grep -qxF "$rel"; then
       pass "shipped file is declared: $rel"

@@ -54,7 +54,6 @@ while [ $# -gt 0 ]; do
 done
 
 command -v jq >/dev/null || die "jq is required"
-[ -d "$PROFILE" ] || die "profile not found: $PROFILE"
 [ -d "$REPO/.git" ] || die "repo clone not found: $REPO"
 ADDITIONS="$REPO/config/additions.json"
 [ -f "$ADDITIONS" ] || die "manifest not found: $ADDITIONS"
@@ -64,6 +63,10 @@ if [ "$LIST" = 1 ]; then
   jq -r '.additions[] | "  \(.id)\t\(.name)"' "$ADDITIONS"
   exit 0
 fi
+
+# Reverse-promotion (below) reads from a live profile; listing the repo manifest
+# above does not, so the profile only has to exist past this point.
+[ -d "$PROFILE" ] || die "profile not found: $PROFILE"
 
 if [ "$ALL" = 1 ]; then
   while IFS= read -r id; do keys+=("$id"); done < <(jq -r '.additions[].id' "$ADDITIONS")
