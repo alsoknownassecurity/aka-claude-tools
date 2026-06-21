@@ -317,7 +317,9 @@ command:
 ```
 aka-claude-tools/
 ├── agent-install.md            # Path A — spec your Claude Code instance executes
+├── agent-uninstall.md          # agent-driven teardown — delegates to uninstall.sh
 ├── install.sh                  # Path B — terminal installer
+├── uninstall.sh                # one-shot teardown (env-isolated, marker-based)
 ├── config/                     # the payload layered into a profile
 │   ├── settings.base.json      # secure base settings
 │   ├── rtk-allowlist.json      # read-only rtk allow rules (with RTK rewriting)
@@ -380,6 +382,12 @@ used only to **refuse** removing the profile the current session is running insi
 which is also excluded from the pick-list), `--yes` won't guess between several
 discovered profiles, and removing the default `~/.claude` always requires an
 interactive confirmation. Prefer running it from a plain shell.
+
+From inside an authenticated session you can instead ask Claude to
+`Read agent-uninstall.md and remove my <name> profile` — it audits what's
+irreplaceable, offers a backup, then delegates the actual removal to `uninstall.sh`
+(so the same guards apply). It will not remove the profile the current session is
+running in — run that from a plain shell.
 
 Or do it by hand: `rm -rf ~/.claude-aka` and delete the
 `# >>> aka-claude-tools managed: <alias> >>>` block from your shell rc. Your default
