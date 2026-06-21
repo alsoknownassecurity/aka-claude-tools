@@ -222,8 +222,15 @@ write_managed_block() {
   local end="# <<< aka-claude-tools managed: ${id} <<<"
   touch "$file"
   local tmp; tmp="$(mktemp)"
+  # Strip any prior block for this exact id, but EOF-safely: buffer the candidate and
+  # drop it only when its end marker appears; an unterminated (corrupt) block is
+  # flushed at EOF, never truncated — same guard as remove_managed_block.
   awk -v b="$begin" -v e="$end" '
-    $0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}
+    $0==b { if (skip) { for (i=0;i<n;i++) print buf[i] } skip=1; n=0; buf[n++]=$0; next }
+    skip && $0==e { skip=0; n=0; next }
+    skip { buf[n++]=$0; next }
+    { print }
+    END { if (skip) for (i=0;i<n;i++) print buf[i] }
   ' "$file" > "$tmp"
   printf '%s\n%s\n%s\n' "$begin" "$content" "$end" >> "$tmp"
   mv "$tmp" "$file"
@@ -242,10 +249,22 @@ remove_managed_block() {
   # block. Scoped by an exact-then-digits match, so a DIFFERENT profile's block (a
   # different base name) is never touched. (Limitation: a profile deliberately named
   # `<id><N>` shares the family — rare, documented.)
-  local pat="^# (>>>|<<<) aka-claude-tools managed: ${id}[0-9]* (>>>|<<<)$"
+  # Regex-escape the id before it goes into an ERE — an id with a metachar (e.g. a
+  # dotted folder basename) must match literally, not over-match.
+  local id_esc; id_esc="$(printf '%s' "$id" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+  local pat="^# (>>>|<<<) aka-claude-tools managed: ${id_esc}[0-9]* (>>>|<<<)$"
   grep -qE "$pat" "$file" || return 1
   local tmp; tmp="$(mktemp)"
-  awk -v p="$pat" '$0 ~ p && />>>$/ {skip=1} $0 ~ p && /<<<$/ {skip=0; next} skip!=1 {print}' "$file" > "$tmp"
+  # Buffer a candidate block and DROP it only once its end marker is seen; if a begin
+  # marker has no matching end before EOF (a corrupt/tampered block), FLUSH the buffer
+  # rather than let `skip` run to EOF and truncate the rest of the user's rc.
+  awk -v p="$pat" '
+    $0 ~ p && />>>$/ { if (skip) { for (i=0;i<n;i++) print buf[i] } skip=1; n=0; buf[n++]=$0; next }
+    skip && $0 ~ p && /<<<$/ { skip=0; n=0; next }
+    skip { buf[n++]=$0; next }
+    { print }
+    END { if (skip) for (i=0;i<n;i++) print buf[i] }
+  ' "$file" > "$tmp"
   mv "$tmp" "$file"
 }
 
