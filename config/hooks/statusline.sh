@@ -383,7 +383,7 @@ if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
             printf "location_flag=%q\n" "$_lc_flag"
         } > "$_parallel_tmp/location.sh"
     else
-        echo -e "location_city='UNKNOWN'\nlocation_region=''\nlocation_cc=''\nlocation_flag='🌐'" > "$_parallel_tmp/location.sh"
+        printf "location_city='UNKNOWN'\nlocation_region=''\nlocation_cc=''\nlocation_flag='🌐'\n" > "$_parallel_tmp/location.sh"
     fi
 } &
 fi
@@ -494,7 +494,7 @@ USAGEEOF
             ' "$USAGE_CACHE" > "$_parallel_tmp/usage.sh" 2>/dev/null
         else
             rm -f "$USAGE_CACHE" 2>/dev/null
-            echo -e "usage_5h=0\nusage_7d=0\nusage_extra_enabled=false\nusage_no_data=true" > "$_parallel_tmp/usage.sh"
+            printf "usage_5h=0\nusage_7d=0\nusage_extra_enabled=false\nusage_no_data=true\n" > "$_parallel_tmp/usage.sh"
         fi
     fi
 } &

@@ -11,16 +11,16 @@ n_ids=$(jq -r '.additions[].id' "$ADDITIONS" | wc -l | tr -d ' ')
 n_uniq=$(jq -r '.additions[].id' "$ADDITIONS" | sort -u | wc -l | tr -d ' ')
 assert_eq   "addition ids are unique" "$n_ids" "$n_uniq"
 
-# Every declared file path (skill/hook/command/statusLine/settings) exists under config/.
+# Every declared file path (skill/hook/command/statusLine/settings/workflow) exists under config/.
 while IFS= read -r rel; do
   [ -z "$rel" ] && continue
   assert_file "declared file exists: config/$rel" "$REPO_ROOT/config/$rel"
-done < <(jq -r '.additions[] | .skill, .hook, .command, .statusLine, .settings | select(.!=null)' "$ADDITIONS")
+done < <(jq -r '.additions[] | .skill, .hook, .command, .statusLine, .settings, .workflow | select(.!=null)' "$ADDITIONS")
 
-# No orphans: every top-level entry under config/{skills,hooks,commands} must be
-# declared by some addition. (Settings/JSON live in config/ root, not scanned.)
-declared="$(jq -r '.additions[] | .skill, .hook, .command, .statusLine | select(.!=null)' "$ADDITIONS" | sort -u)"
-for cat in skills hooks commands; do
+# No orphans: every top-level entry under config/{skills,hooks,commands,workflows}
+# must be declared by some addition. (Settings/JSON live in config/ root, not scanned.)
+declared="$(jq -r '.additions[] | .skill, .hook, .command, .statusLine, .workflow | select(.!=null)' "$ADDITIONS" | sort -u)"
+for cat in skills hooks commands workflows; do
   [ -d "$REPO_ROOT/config/$cat" ] || continue
   for entry in "$REPO_ROOT/config/$cat"/*; do
     [ -e "$entry" ] || continue
