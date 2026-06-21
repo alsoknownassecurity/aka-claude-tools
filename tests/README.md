@@ -26,6 +26,8 @@ so the `.ts` guard deploy is exercised) alongside the shell/json lint
 | `test_select` | `CT_ADDITIONS` selection lever: exact-subset deploy, a non-recommended addition + its config template, empty = none, an unknown id aborts loudly. |
 | `test_reconcile` | A retired kit permission rule is dropped on upgrade; a rule the kit never shipped (the user's own) is kept. |
 | `test_retired_cleanup` | An addition the kit dropped (tombstoned in `managed-permissions.json.retiredAdditions`) has its orphan files removed on upgrade; user-owned files untouched. |
+| `test_hook_selfclean` | A marked kit hook the kit no longer ships is removed + its registration pruned on re-run; an unmarked (user) hook and a still-shipped marked hook are kept. |
+| `test_rebuild` | `--clean` rebuild restores the profile's own state (settings/CLAUDE.md/session history) from the backup and re-applies kit files; secret-bearing caches stay in the backup. |
 | `test_guard_registration` | Egress guards wired correctly: leak-guard registered under both `WebSearch\|WebFetch` and `Bash`; command-guard via an absolute `bun` path; shared `hooks/lib` placed. |
 | `test_manifest` | `additions.json` integrity: valid, unique ids, declared files exist, no undeclared orphans (shared `lib/` excepted). |
 | `test_promote` | Reverse flow (`tools/promote.sh`): a live edit round-trips path-remapped; a planted personal trace is refused; `--list` resolves the manifest. |
