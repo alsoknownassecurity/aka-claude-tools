@@ -132,7 +132,8 @@ merge_settings() {
     | ( ($e.hooks // {}) as $eh | ($a.hooks // {}) as $ah
         | (($eh | keys) + ($ah | keys) | unique) as $evts
         | reduce $evts[] as $evt ({};
-            .[$evt] = ((($eh[$evt] // []) + ($ah[$evt] // [])) | unique_by(tojson)))
+            .[$evt] = ((($eh[$evt] // []) + ($ah[$evt] // []))
+              | unique_by(walk(if type=="object" then to_entries|sort_by(.key)|from_entries else . end) | tojson)))
       ) as $hooks
     | (if ($hooks | length) > 0 then .hooks = $hooks else del(.hooks) end)
     | del(.["$comment"])
@@ -162,7 +163,7 @@ prune_hook_regs() {
   jq --arg b "$1" '
     if (.hooks|type)=="object" then
       (.hooks |= ( to_entries
-        | map(.value |= map(select(((.hooks // []) | map(.command // "") | any(contains($b))) | not)))
+        | map(.value |= map(select(((type=="object") and ((.hooks // []) | map((.command) as $c | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)) | any(contains($b)))) | not)))
         | map(select((.value|type)=="array" and (.value|length) > 0))
         | from_entries ))
       | (if (.hooks // {}) == {} then del(.hooks) else . end)
@@ -171,7 +172,12 @@ prune_hook_regs() {
 
 # Drop .statusLine if its command references basename $1.
 prune_statusline() {
-  jq --arg b "$1" 'if ((.statusLine.command // "") | contains($b)) then del(.statusLine) else . end'
+  jq --arg b "$1" '
+    if (.statusLine|type)=="object"
+       and ((.statusLine.command) as $c
+            | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
+            | contains($b))
+    then del(.statusLine) else . end'
 }
 
 # Subtract an addition's shipped permission arrays + env keys (read from its
@@ -199,7 +205,10 @@ prune_perms_env() {
 # addition_owned_paths <id> <config_dir> → echo the files/dirs the addition owns.
 addition_owned_paths() {
   local id="$1" cfg="$2" key rel
-  for key in hook command statusLine skill; do
+  # Keep this key list in sync with the placeable payload keys used by the per-id
+  # build blocks (place_file/place_dir): hook, command, statusLine, skill, workflow.
+  # A placeable key omitted here orphans that addition's file on deselect.
+  for key in hook command statusLine skill workflow; do
     rel="$(jq -r --arg i "$id" --arg k "$key" '.additions[] | select(.id==$i) | .[$k] // ""' "$CONFIG_SRC/additions.json")"
     [ -n "$rel" ] && echo "$cfg/$rel"
   done
@@ -215,6 +224,10 @@ prune_addition_from_settings() {
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
   [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(basename "$sline")")"
+  # The statusline addition can pin a weather location into .preferences.location at
+  # install; prune_statusline only drops the statusLine command, so remove that pinned
+  # preference too (it is the only thing the kit writes under .preferences).
+  [ "$id" = "statusline" ] && s="$(printf '%s' "$s" | jq 'if (.preferences|type)=="object" then (del(.preferences.location) | (if (.preferences=={}) then del(.preferences) else . end)) else . end')"
   [ -n "$setf" ] && [ -f "$CONFIG_SRC/$setf" ] && s="$(printf '%s' "$s" | prune_perms_env "$CONFIG_SRC/$setf")"
   printf '%s' "$s"
 }
@@ -423,6 +436,13 @@ setup_one_config() {
   isay "${C_DIM}Tip: enter ~/.claude to back up and rebuild your DEFAULT config with these additions.${C_RST}"
   prompt config_dir "Config folder to create/update:" "$HOME/.claude-aka"
   config_dir="${config_dir/#\~/$HOME}"
+  # Normalize before ANY use. Strip a trailing slash so `~/.claude/` still matches the
+  # default-dir test (else it's mis-handled as a non-default profile and the backup
+  # path becomes a CHILD of the dir being moved). Make a relative path absolute so the
+  # alias + hook command strings bind to a stable location, not the cwd the installer
+  # happened to run in. Leave a bare "/" alone.
+  [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
+  case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
 
   # 1b. in-place rebuild: when the target config dir ALREADY EXISTS, offer to move
   # it to a timestamped backup, recreate it clean with the selected additions, and
@@ -463,14 +483,34 @@ setup_one_config() {
     say  "  but it may show hook errors while files are being changed underneath it. That's"
     say  "  normal and won't impact the install. The next launch loads the new setup.${C_RST}"
     if confirm "Back up ${_disp} and rebuild it clean?" "$_rebuild_def"; then
+      # Resolve a symlinked config dir to its REAL target so the rebuild backs up and
+      # recreates the real store, leaving the user's symlink (config-on-a-synced-
+      # volume) intact. `mv` on the link itself would rename the LINK — faking the
+      # backup as a dangling link and orphaning the real store.
+      local _rb_target="$config_dir"
+      [ -L "$config_dir" ] && _rb_target="$(cd "$config_dir" && pwd -P)"
       rebuild_backup="${config_dir}.backup-$(date +%Y%m%d-%H%M%S)"
+      # Collision-proof the backup path. The timestamp is second-granular and a
+      # rebuild runs in well under a second, so two rebuilds in the same second
+      # (double-run, rollback-then-retry, CI loop, a leftover same-second backup)
+      # would compute the SAME path — and `mv DIR EXISTING_DIR` NESTS rather than
+      # errors, which buries the live profile and restores an empty one (silent data
+      # loss). Uniquify until the path is free.
+      if [ -e "$rebuild_backup" ]; then
+        local _bn=2
+        while [ -e "${rebuild_backup}-${_bn}" ]; do _bn=$((_bn+1)); done
+        rebuild_backup="${rebuild_backup}-${_bn}"
+      fi
       # Arm the rollback trap BEFORE the mv: from here until the rebuild finishes,
       # an interrupt or failure restores the backup over the half-built dir.
-      _CT_REBUILD_TARGET="$config_dir"
+      _CT_REBUILD_TARGET="$_rb_target"
       _CT_REBUILD_BACKUP="$rebuild_backup"
       _CT_REBUILD_DONE=0
-      mv "$config_dir" "$rebuild_backup"
-      mkdir -p "$config_dir"
+      mv "$_rb_target" "$rebuild_backup"
+      # Fail closed if the move didn't yield a clean, separate backup dir — never
+      # proceed to mkdir+restore on a bad move (that is the data-loss path).
+      [ -d "$rebuild_backup" ] || die "Rebuild backup move failed ($rebuild_backup not created) — aborting before any data is lost."
+      mkdir -p "$_rb_target"
       default_src="$rebuild_backup"
       ok "Backed up ${_disp} → ${rebuild_backup/#$HOME/~}"
       # State that must survive a clean rebuild without a re-login. For the DEFAULT
@@ -511,6 +551,24 @@ setup_one_config() {
         ok "Restored CLAUDE.md ($(wc -l < "$config_dir/CLAUDE.md" | tr -d ' ') lines)"
       fi
       migrate_sessions "$rebuild_backup" "$config_dir"
+      # Restore the user's OWN (unmarked) hook FILES so the registrations carried in
+      # the restored settings.json don't dangle. Kit hooks (managed-marker, or a name
+      # the kit still ships) are re-placed fresh by the build below, so copy back only
+      # UNMARKED files the kit doesn't ship — the same marker convention the self-clean
+      # uses (marked = kit, unmarked = user). Without this, a --clean rebuild keeps a
+      # user hook's registration but drops its file → a hook pointing at nothing.
+      if [ -d "$rebuild_backup/hooks" ]; then
+        local _uh _ub _urest=0
+        for _uh in "$rebuild_backup"/hooks/*; do
+          [ -f "$_uh" ] || continue
+          grep -q 'aka-claude-tools:managed-hook' "$_uh" 2>/dev/null && continue   # kit hook → re-placed fresh
+          _ub="$(basename "$_uh")"
+          [ -e "$CONFIG_SRC/hooks/$_ub" ] && continue                              # a name the kit ships → fresh copy wins
+          mkdir -p "$config_dir/hooks"
+          cp "$_uh" "$config_dir/hooks/$_ub"; _urest=$((_urest+1))
+        done
+        [ "$_urest" -gt 0 ] && ok "Restored $_urest user-owned hook file(s) from the backup"
+      fi
       # Transparency: report exactly what runtime state came back. An upgrade
       # should be auditable — the kit's "never change things silently" principle
       # applies to restores too. Counts are best-effort and portable (BSD/GNU).
@@ -765,7 +823,35 @@ setup_one_config() {
 
   # 4d. merge settings (existing-in-dir ∪ additions) and write
   local existing='{}'
-  [ -f "$config_dir/settings.json" ] && existing="$(cat "$config_dir/settings.json")"
+  if [ -f "$config_dir/settings.json" ]; then
+    # Validate before the merge consumes it. A corrupt/truncated settings.json
+    # otherwise floods the user with raw `jq: parse error` lines and aborts with no
+    # actionable framing (the parse failure surfaces from deep inside merge_settings
+    # / the prune helpers). Fail with a named, recoverable message instead.
+    if [ -s "$config_dir/settings.json" ] && ! jq -e . "$config_dir/settings.json" >/dev/null 2>&1; then
+      die "$config_dir/settings.json is not valid JSON (corrupt or truncated). Fix or remove it, then re-run — or re-run with --clean to back it up and rebuild."
+    fi
+    existing="$(cat "$config_dir/settings.json")"
+    # Coerce wrong-TYPED (but valid-JSON) kit-managed fields to safe shapes so the
+    # merge/prune jq can't crash on them — e.g. permissions.deny as a string, which
+    # Claude Code itself simply ignores. Refusing here would leave the user
+    # UNPROTECTED over a field CC already ignores; coercing lets the secure baseline
+    # still land. Well-typed settings pass through unchanged.
+    existing="$(printf '%s' "$existing" | jq '
+      if type!="object" then {} else
+        (if has("permissions") and ((.permissions|type)!="object") then .permissions={} else . end)
+        | (if (.permissions|type)=="object" then
+             reduce ("allow","deny","ask") as $k (.;
+               if (.permissions|has($k)) and ((.permissions[$k]|type)!="array")
+               then .permissions[$k]=[] else . end)
+           else . end)
+        | (if has("hooks") and ((.hooks|type)!="object") then .hooks={} else . end)
+        | (if (.hooks|type)=="object" then
+             .hooks |= with_entries(.value = (if (.value|type)=="array" then .value else [] end))
+           else . end)
+        | (if has("env") and ((.env|type)!="object") then .env={} else . end)
+      end')"
+  fi
 
   # 4d-pre. Uninstall deselected additions. Unchecking an addition you had
   # before now REMOVES it: its hook/command/skill files are deleted and its
@@ -786,6 +872,19 @@ setup_one_config() {
     fi
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
+
+  # 4d-pre1a. The shared egress-guard lib (hooks/lib/secret-patterns.json) is owned by
+  # NO single addition — it's placed whenever EITHER leak-guard or command-guard is selected.
+  # The per-addition deselect loop above can't remove it (neither guard's owned-paths
+  # list includes it), so deselecting BOTH guards would orphan it. Remove it only when
+  # NEITHER consumer remains.
+  if ! is_selected leak-guard "$_sel_ids" && ! is_selected command-guard "$_sel_ids"; then
+    if [ -e "$config_dir/hooks/lib/secret-patterns.json" ]; then
+      rm -f "$config_dir/hooks/lib/secret-patterns.json"
+      ok "Removed shared egress-guard lib (no guard selected)"
+    fi
+    rmdir "$config_dir/hooks/lib" 2>/dev/null || true
+  fi
 
   # 4d-pre1b. Clean RETIRED additions — whole additions the kit shipped before and
   # has since dropped from additions.json. The loop above only iterates ids STILL
@@ -835,6 +934,16 @@ setup_one_config() {
     ok "Wrote $config_dir/settings.json"
   fi
 
+  # Dangerous-flag heads-up — shown on EVERY path (incl. --defaults/non-interactive),
+  # never suppressed. Decision: the kit never STRIPS these (they're the user's call),
+  # but it must never let them sit SILENTLY: bypassPermissions / the skip-prompt flags
+  # make the kit's deny rules inert. (The migrate path additionally offers an
+  # interactive strip; this is the always-on safety net for the in-place + rebuild paths.)
+  if [ -f "$config_dir/settings.json" ] && jq -e '(.permissions.defaultMode == "bypassPermissions") or (.skipDangerousModePermissionPrompt == true) or (.skipAutoPermissionPrompt == true)' "$config_dir/settings.json" >/dev/null 2>&1; then
+    warn "This profile's settings.json enables bypassPermissions and/or the skip-prompt flags —"
+    warn "Claude runs without permission prompts, so the kit's deny rules are NOT enforced while they are set."
+  fi
+
   # tidy empty dirs
   rmdir "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows" 2>/dev/null || true
 
@@ -849,7 +958,7 @@ setup_one_config() {
   if [ "$is_default" = "1" ]; then
     say ""
     ok "Default config ~/.claude ready — plain ${C_BOLD}claude${C_RST} launches it."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history) — delete it once you're happy.${C_RST}"
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
     say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
   else
     local rc; rc="$(detect_shell_rc)"
@@ -880,6 +989,7 @@ setup_one_config() {
         write_managed_block "$rc" "$newalias" \
 "alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
         alias_name="$newalias"
+        printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
         ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
       else
         say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
@@ -887,12 +997,13 @@ setup_one_config() {
     else
       write_managed_block "$rc" "$alias_name" \
 "alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+      printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
       ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
     fi
 
     say ""
     ok "Config '${alias_name}' ready."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history) — delete it once you're happy.${C_RST}"
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
     say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
   fi
 

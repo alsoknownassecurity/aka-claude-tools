@@ -234,12 +234,18 @@ write_managed_block() {
 # alias block when the same alias is already provided elsewhere.
 remove_managed_block() {
   local file="$1" id="$2"
-  local begin="# >>> aka-claude-tools managed: ${id} >>>"
-  local end="# <<< aka-claude-tools managed: ${id} <<<"
   [ -f "$file" ] || return 1
-  grep -qF "$begin" "$file" || return 1
+  # Match the managed block for <id> AND its collision-renamed variants <id><N>:
+  # on an alias-name collision the installer appends a numeric suffix (aka -> aka2),
+  # and the documented uninstall only knows the default name. Removing the whole
+  # <id>-family lets `remove_managed_block <rc> aka` also clear a leftover `aka2`
+  # block. Scoped by an exact-then-digits match, so a DIFFERENT profile's block (a
+  # different base name) is never touched. (Limitation: a profile deliberately named
+  # `<id><N>` shares the family — rare, documented.)
+  local pat="^# (>>>|<<<) aka-claude-tools managed: ${id}[0-9]* (>>>|<<<)$"
+  grep -qE "$pat" "$file" || return 1
   local tmp; tmp="$(mktemp)"
-  awk -v b="$begin" -v e="$end" '$0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}' "$file" > "$tmp"
+  awk -v p="$pat" '$0 ~ p && />>>$/ {skip=1} $0 ~ p && /<<<$/ {skip=0; next} skip!=1 {print}' "$file" > "$tmp"
   mv "$tmp" "$file"
 }
 
