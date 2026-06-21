@@ -50,8 +50,6 @@ git clone git@github.com:alsoknownassecurity/aka-claude-tools.git
 cd aka-claude-tools
 ```
 
-Two ways to install — pick one:
-
 ### Path A — let your authenticated Claude Code do it (recommended)
 
 In your existing, already-logged-in Claude Code session:
@@ -60,85 +58,69 @@ In your existing, already-logged-in Claude Code session:
 Read agent-install.md and set up a new profile for me.
 ```
 
-Claude reads the whole existing config and reasons about migration — catching
-rough edges the script can't (MCP servers, `CLAUDE.md` `@`-imports, non-hook
-absolute paths, skill↔hook dependencies). You're already authenticated, so
-there's no token/login step. Spec: [`agent-install.md`](agent-install.md).
+Path A **owns the whole lifecycle** — install, upgrade, and migrating a rich
+existing config. Claude reads your whole config and reasons about the judgment
+calls a script can't (which items to carry over, MCP servers, `CLAUDE.md`
+`@`-imports and other absolute paths that need rewriting, skill↔hook
+dependencies), then **invokes `install.sh` for the deterministic, repeatable
+mechanics** — layering the additions (`--apply`) and creating the launcher alias
+(`--alias`). You're already authenticated, so there's no token/login step. Spec:
+[`agent-install.md`](agent-install.md).
 
-### Path B — terminal script
+`install.sh` is the **sole sanctioned writer of your shell rc**: Path A calls it
+for the alias rather than editing `~/.zshrc` itself, so the `startup-write-guard`
+and `command-guard` additions stay strict (an agent writing to your startup files is
+exactly what they block).
+
+### Path B — terminal script (the engine; CI / no-agent installs)
 
 ```bash
 ./install.sh
 ```
 
-Deterministic and fast. Interactive prompts:
+`install.sh` is the deterministic engine. Run bare, it sets up a fresh profile —
+prompting for the **config folder** (default `~/.claude-aka`), the **alias**
+(default `aka`), and **which additions** to layer on (recommended pre-selected) —
+or layers onto an existing folder in place. Migrating a rich existing config is
+**Path A's job** (it reasons about it); pointing Path B at an existing dir simply
+layers the additions on top.
 
-1. **Which config folder** to create/update (default `~/.claude-aka`).
-2. **Which alias** launches it (default `aka`).
-3. **Migrate from an existing config?** — defaults to your **live** Claude Code
-   config dir (`$CLAUDE_CONFIG_DIR`, or `~/.claude` when unset), but you can point
-   it at any other folder or a backup. It scans each category (agents, skills,
-   commands, output-styles, hooks) and lets you pick exactly what to bring over
-   (`1 3`, ranges `1-3`, or `all`); plus settings.json (hook paths auto-rewritten,
-   symlinks dereferenced) and `CLAUDE.md`. If your settings already enable
-   `bypassPermissions` / skip-prompt flags, the installer tells you and offers to
-   turn them off — but **keeps your setting by default**: the kit's own template
-   never adds them, and your existing choice is yours to keep. Optionally migrate
-   **session history** too (past conversations, input history, todos) — an explicit
-   prompt, **off by default**. Secrets are **never** migrated, and neither are the
-   shell/env and paste caches that can capture them (`shell-snapshots/`,
-   `session-env/`, `paste-cache/`, `file-history/`, `.credentials.json`).
-4. **Which additions** to layer on (recommended ones pre-selected).
-
-Non-interactive: `./install.sh --defaults` takes every default (clean profile, no migration);
-it is equivalent to exporting `CT_NONINTERACTIVE=1`, which suppresses every prompt. Add `--clean`
-to force the back-up + clean-rebuild path on an existing profile (it also refreshes kit-managed
-hook/command/skill files to the current version), and `--no-auth-inherit` when the new profile is
-for a *different* account.
-To script an **exact set** of additions, set `CT_ADDITIONS` to a space-separated list of
-addition ids (see [`config/additions.json`](config/additions.json)) — it replaces the menu
-and installs precisely those (an unknown id aborts; empty installs none):
+Non-interactive (CI / scripted): `./install.sh --defaults` takes every default
+(equivalent to `CT_NONINTERACTIVE=1`, which suppresses every prompt); add
+`--no-auth-inherit` when the profile is for a *different* account. Set
+`CT_ADDITIONS` to a space-separated list of addition ids (see
+[`config/additions.json`](config/additions.json)) to install an **exact set**
+(unknown id aborts; empty installs none), and `CT_CONFIG_DIR` to pick the folder:
 
 ```bash
-CT_ADDITIONS="secure-settings leak-guard wrap-up" ./install.sh --defaults
+CT_CONFIG_DIR="$HOME/.claude-aka" CT_ADDITIONS="secure-settings leak-guard wrap-up" \
+  ./install.sh --defaults
 ```
 
-> **Rebuild your default `~/.claude`:** enter `~/.claude` as the target folder and
-> the installer offers to move it to a timestamped backup (`~/.claude.backup-…`),
-> recreate it clean with the additions, and **restore everything you set up** from
-> the backup automatically — settings, CLAUDE.md, conversations/memory/history,
-> your agents/skills/commands/hooks, auth, and any other content (custom dirs,
-> plugins, MCP config). It's your profile returning to itself, so only stale **kit**
-> files are replaced fresh. No alias is written — plain `claude` already launches it
-> — and your login survives: `~/.claude.json` lives at `$HOME`, macOS Keychain auth
-> is keyed to the unchanged dir path, and a file-based `.credentials.json` is copied
-> back. A Claude Code session that's already running keeps working (it's loaded in
-> memory), though it may show hook errors while files are changed underneath it —
-> that's normal and doesn't affect the install. The next time you launch `claude`,
-> the newly-configured setup loads; the backup is kept as a safety net, delete it
-> once you're happy. (Decline the backup and the installer layers the additions
-> onto `~/.claude` in place instead.)
+**Engine modes** (what Path A invokes — also usable directly):
+
+- `CT_CONFIG_DIR=<dir> CT_ADDITIONS="<ids>" ./install.sh --apply` — layer exactly
+  those additions onto `<dir>` and exit: place files, union settings onto whatever
+  is already there (including a `settings.json` Path A migrated in first), reconcile
+  retired permissions, register hooks. No prompts, alias, or auth.
+- `CT_CONFIG_DIR=<dir> CT_ALIAS=<name> ./install.sh --alias` — create/check the
+  launcher alias for `<name> → <dir>`. **Idempotent** — re-running for the same
+  dir+alias replaces the managed block, never duplicates it, and multiple
+  aka-managed profiles each keep their own block. On a real name collision it exits
+  non-zero (leaving your existing alias untouched) so the caller picks another name.
+
+> **Existing profile?** Re-running `install.sh` for a folder that already exists
+> **layers in place** — it never moves or wipes your dir. Re-registering the same
+> addition won't duplicate it, and **unchecking** (deselecting) an addition on a
+> re-run uninstalls it. For a clean rebuild, or to migrate a rich config faithfully,
+> use **Path A**.
 >
-> **Complex config?** The script preserves files byte-for-byte but can't *reason*
-> about config that needs interpretation — MCP servers, `CLAUDE.md` `@`-imports that
-> may need path rewriting, hook interdependencies. When it detects those it points
-> you at **Path A** (the Claude-driven install above), which reads your whole config
-> and migrates them intelligently. Prefer Path A for a rich existing profile.
->
-> **Rebuilding any other existing profile works the same way** — target any config
-> dir that already exists (e.g. `~/.claude-work`) and you get the same offer: back
-> up → rebuild clean → migrate your picks back. The difference for `~/.claude` is
-> just that it needs no alias and defaults to *yes*; every other existing profile
-> defaults to **layer-in-place** (so an idempotent re-run to add an addition never
-> wipes it — choose to rebuild only when you mean to). Account metadata and a
-> file-based `.credentials.json` are restored from the backup. This is the clean
-> upgrade path as the kit grows.
->
-> **Upgrading a pre-rename profile?** Profiles created before the hook rename carry the
-> old hook names (`command-guard.ts`, `leak-guard.sh`, `rtk-safe.hook.sh`).
-> Run `./hook-rename.sh [CONFIG_DIR]` once **before** `./install.sh` to retire those
-> old hooks and their stale `settings.json` registrations; the installer then places the
-> renamed `command-guard`/`leak-guard`/`rtk-safe` hooks cleanly. (Newer profiles self-clean via
+> **Upgrading a pre-rename profile?** Profiles created before the hook rename carry
+> the old hook names (`command-guard.ts`, `leak-guard.sh`,
+> `rtk-safe.hook.sh`). Run `./hook-rename.sh [CONFIG_DIR]` once
+> **before** `./install.sh` to retire those old hooks and their stale `settings.json`
+> registrations; the installer then places the renamed
+> `command-guard`/`leak-guard`/`rtk-safe` hooks cleanly. (Newer profiles self-clean via
 > the managed marker, so this one-time step is only for old ones.)
 
 ---
@@ -340,9 +322,9 @@ command:
 
 ```
 aka-claude-tools/
-├── agent-install.md            # Path A — spec your Claude Code instance executes
+├── agent-install.md            # Path A — lifecycle spec your Claude Code executes
 ├── agent-uninstall.md          # agent-driven teardown — delegates to uninstall.sh
-├── install.sh                  # Path B — terminal installer
+├── install.sh                  # the engine — layering (--apply) + alias (--alias)
 ├── uninstall.sh                # one-shot teardown (env-isolated, marker-based)
 ├── config/                     # the payload layered into a profile
 │   ├── settings.base.json      # secure base settings
@@ -361,36 +343,29 @@ aka-claude-tools/
 
 ## Upgrading
 
-`git pull` this repo, then **re-run the installer against the profile you already
-use** (your existing aka-claude-tools-enhanced config — e.g. `~/.claude-aka`, or even
-`~/.claude` itself). Because the target already exists, the installer offers to
-**back it up, rebuild it clean with the latest additions, and migrate your config
-back from the backup** — so you end up with a freshly-upgraded,
-aka-claude-tools-enhanced Claude Code instead of additions piled on top of old ones:
+`git pull` this repo, then **re-run against the profile you already use** (e.g.
+`~/.claude-aka`). The upgrade **layers in place** — it never moves or wipes your
+dir:
 
-- The **current** hooks/commands replace whatever the old install left behind (the
-  rebuild starts clean, then layers today's additions).
-- Your **own** settings, agents, skills, commands, and `CLAUDE.md` come back via
-  the migrate step (pick what you want); secure denies are unioned, and if your
-  settings enable `bypassPermissions` the installer surfaces it and keeps it
-  unless you tell it otherwise.
-- Your **login survives** — account metadata and a file-based `.credentials.json`
-  are restored from the backup, Keychain auth is keyed to the unchanged dir path.
-- The **backup** (`<dir>.backup-…`) keeps sessions/history and anything you didn't
-  migrate; delete it once you're happy.
+- The **current** kit hooks/commands/skills are re-placed at this version (a
+  re-run refreshes the kit-managed files), and your selected additions are
+  re-layered.
+- Your **own** settings are preserved: permission rules you added are unioned and
+  never dropped; the kit's **own** rules are *reconciled* (new ones adopted, ones
+  the kit has since **retired** removed) — your rules are untouched.
+- **Deselecting** an addition on a re-run uninstalls it (its files + settings
+  registrations are pruned).
 
-Choosing the rebuild is opt-in — for any profile other than `~/.claude` it defaults
-to *layer-in-place*, so a quick re-run that just adds one addition never wipes your
-dir. Pick the rebuild when you want the clean upgrade. (Prefer **Path A** if your
-config has MCP servers or `@`-imports the script can't reason about.)
+The easiest upgrade is **Path A** — ask your authenticated Claude Code to read
+`agent-install.md`; it re-applies the kit (via `install.sh --apply`) and reasons
+about anything in your config a script can't. For a guaranteed-clean rebuild, or
+to migrate a rich config (MCP servers, `@`-imports), Path A is the route.
 
 > **No version tracking.** The kit records no installed-version number, so it can't
 > detect a *downgrade*. An installer only retires the additions *it* knows about, so
 > re-running an **older** kit over a profile a **newer** kit set up keeps that newer
 > kit's entries in place (the old kit has never heard of them). This is harmless but
-> can leave additions the older kit wouldn't ship on its own. If you ever want a
-> guaranteed-clean state, choose the **rebuild** on re-run — it starts from an empty
-> dir and layers only the additions the running kit ships.
+> can leave additions the older kit wouldn't ship on its own.
 
 ## Uninstall
 
