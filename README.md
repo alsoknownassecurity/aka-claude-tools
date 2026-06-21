@@ -356,6 +356,14 @@ to *layer-in-place*, so a quick re-run that just adds one addition never wipes y
 dir. Pick the rebuild when you want the clean upgrade. (Prefer **Path A** if your
 config has MCP servers or `@`-imports the script can't reason about.)
 
+> **No version tracking.** The kit records no installed-version number, so it can't
+> detect a *downgrade*. An installer only retires the additions *it* knows about, so
+> re-running an **older** kit over a profile a **newer** kit set up keeps that newer
+> kit's entries in place (the old kit has never heard of them). This is harmless but
+> can leave additions the older kit wouldn't ship on its own. If you ever want a
+> guaranteed-clean state, choose the **rebuild** on re-run — it starts from an empty
+> dir and layers only the additions the running kit ships.
+
 ## Uninstall
 
 Delete the config folder (`rm -rf ~/.claude-aka`) and remove the
