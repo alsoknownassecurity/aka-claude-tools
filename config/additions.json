@@ -68,6 +68,14 @@
       "skill": "skills/loop-designer"
     },
     {
+      "id": "secure-deep-research",
+      "name": "secure-deep-research workflow",
+      "prompt": "secure-deep-research workflow (privacy-aware multi-source research, sensitive-topic gating)?",
+      "recommended": false,
+      "description": "Privacy-aware deep-research workflow: fan-out web search -> fetch -> 3-vote adversarial verify -> cited synthesis. The Scope agent classifies privacy sensitivity (conservative); sensitive topics are query-redacted, GATED for confirmation before any external query fires, fan-out-reduced, and routed through a self-hosted SearXNG MCP server (mcp__searxng__*). Normal topics use WebSearch/WebFetch at full fan-out. Model-tiered: Scope+Synthesize inherit the session model, the Search/Fetch/Verify fan-out runs on Sonnet. Placed in <dir>/workflows/ and auto-registers as the /secure-deep-research skill. NOTE: the sensitive-topic path needs a self-hosted SearXNG MCP server configured; without it, only the normal (WebSearch) path works.",
+      "workflow": "workflows/secure-deep-research.js"
+    },
+    {
       "id": "harness-pointer",
       "name": "Harness pointer (opt-in)",
       "prompt": "Harness pointer (opt-in, ships disabled+empty)?",

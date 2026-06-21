@@ -586,6 +586,7 @@ setup_one_config() {
       migrate_category "$migrate_src" "$config_dir" commands      file
       migrate_category "$migrate_src" "$config_dir" output-styles file
       migrate_category "$migrate_src" "$config_dir" hooks         file
+      migrate_category "$migrate_src" "$config_dir" workflows     file
       # Optional: bring over session/history state (past conversations, input
       # history, todos) from ANOTHER config. OFF by default — it's personal and
       # can be large, and secrets / shell-env / paste caches are never included
@@ -614,7 +615,7 @@ setup_one_config() {
   done < <(jq -r '.additions[] | [.id, (.recommended|tostring), (.prompt // .name)] | @tsv' "$CONFIG_SRC/additions.json")
 
   # ── build ──
-  mkdir -p "$config_dir/hooks" "$config_dir/commands"
+  mkdir -p "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows"
 
   # 4b. assemble additions object
   local add='{}'
@@ -735,6 +736,12 @@ setup_one_config() {
     add="$(jq --arg cmd "$config_dir/hooks/startup-write-guard.sh" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
   fi
+  if is_selected secure-deep-research "$_sel_ids"; then
+    # A .js dropped in <config>/workflows/ auto-registers as BOTH the named
+    # workflow and the /secure-deep-research skill (Claude Code scans this dir).
+    place_file "$CONFIG_SRC/workflows/secure-deep-research.js" "$config_dir/workflows"
+    ok "Placed secure-deep-research workflow ${C_DIM}(invoke: /secure-deep-research)${C_RST}"
+  fi
 
   # 4c. opt-in config template if any config-driven hook was selected
   if { is_selected leak-guard "$_sel_ids" || is_selected harness-pointer "$_sel_ids"; } && [ ! -f "$config_dir/aka-claude-tools.config" ]; then
@@ -799,7 +806,7 @@ setup_one_config() {
   fi
 
   # tidy empty dirs
-  rmdir "$config_dir/hooks" "$config_dir/commands" 2>/dev/null || true
+  rmdir "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows" 2>/dev/null || true
 
   # 4e. inherit auth so the engineer doesn't re-onboard / re-login.
   # The default profile needs neither: its ~/.claude.json lives at $HOME (not in
