@@ -48,5 +48,24 @@ mv "$_bak" "$PATTERNS"
 { [ "$out" = 2 ] || [ "$outts" = 2 ]; } && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); printf '  \033[31m✗ FAIL-OPEN HOLE: missing patterns did not block outbound (web=%s bash=%s)\033[0m\n' "$out" "$outts"; }
 [ "$ben" = 0 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); printf '  \033[31m✗ degraded mode over-blocks benign non-outbound (web=%s)\033[0m\n' "$ben"; }
 
+# ── command-guard-only: startup-file writes (persistence vector) ─────────────────
+# Folded in from the retired startup-write-guard addition. Bun-GATED by design:
+# when bun is absent the protection is intentionally not present (the Edit/Write
+# TOOL deny in secure-settings still holds), so it can't go in the shared corpus
+# (whose invariant must hold without bun) — assert it here only under bun.
+if [ "$HAVE_BUN" = 1 ]; then
+  for w in 'echo x >> ~/.zshrc' 'cat f > ~/.bashrc' "sed -i 's/a/b/' ~/.zshenv" 'tee -a ~/.profile <<<z' 'cp e ~/.bash_profile'; do
+    j=$(jq -n --arg v "$w" '{tool_name:"Bash",tool_input:{command:$v}}')
+    [ "$(ts_rc "$j")" = 2 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); printf '  \033[31m✗ command-guard did NOT block startup-write: %s\033[0m\n' "$w"; }
+  done
+  # Reads, unrelated writes, and the sanctioned alias writer must NOT be blocked.
+  for a in 'cat ~/.zshrc' 'grep alias ~/.zshrc' 'echo hi >> notes.txt' './install.sh --alias'; do
+    j=$(jq -n --arg v "$a" '{tool_name:"Bash",tool_input:{command:$v}}')
+    [ "$(ts_rc "$j")" = 0 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); printf '  \033[31m✗ command-guard OVER-blocked: %s\033[0m\n' "$a"; }
+  done
+else
+  echo "  note: bun absent — command-guard startup-file-write block not exercised."
+fi
+
 printf '  \033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

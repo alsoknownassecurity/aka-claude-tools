@@ -7,7 +7,7 @@
 #   • a HOOK addition       (leak-guard → .hooks.PreToolUse registration + file)
 #   • a STATUSLINE addition (statusline → .statusLine + file)
 #   • a PERM+ENV addition   (secure-settings → .permissions.deny + .env, via settings.base.json)
-# while OTHER still-selected additions (wrap-up command, startup-write-guard hook)
+# while OTHER still-selected additions (wrap-up command, harness-pointer hook)
 # stay fully intact, and a second identical re-deselect is a no-op (idempotent).
 # Uses CT_ADDITIONS for a deterministic non-interactive selection, mirroring
 # test_uninstall.sh's install convention exactly.
@@ -26,11 +26,11 @@ KIT_DENY="$(jq -r --arg f "$SETF" '.permissions.deny[0] // empty' "$REPO_ROOT/co
 KIT_ENV_KEY="$(jq -r --arg f "$SETF" '.env | keys[0] // empty' "$REPO_ROOT/config/$SETF")"
 
 # ── 1. Install the full set: hook + statusLine + perm/env + two keepers ───────
-run "secure-settings leak-guard statusline wrap-up startup-write-guard"
+run "secure-settings leak-guard statusline wrap-up harness-pointer"
 assert_eq "install exits 0" "0" "$?"
 assert_file "X(hook) leak-guard.sh deployed"          "$PROFILE/hooks/leak-guard.sh"
 assert_file "X(statusLine) statusline.sh deployed"   "$PROFILE/hooks/statusline.sh"
-assert_file "keeper startup-write-guard.sh deployed" "$PROFILE/hooks/startup-write-guard.sh"
+assert_file "keeper harness-pointer.sh deployed" "$PROFILE/hooks/harness-pointer.sh"
 assert_file "keeper wrap-up.md deployed"             "$PROFILE/commands/wrap-up.md"
 assert_ok "leak-guard hook registered" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
@@ -50,8 +50,8 @@ jq --arg ud "$USER_DENY" --arg uh "$USER_HOOK" \
    | .hooks.PreToolUse += [{"matcher":"Bash","hooks":[{"type":"command","command":$uh}]}]' \
   "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 
-# ── 3. Re-run DESELECTING the three; keep wrap-up + startup-write-guard ────────
-run "wrap-up startup-write-guard"
+# ── 3. Re-run DESELECTING the three; keep wrap-up + harness-pointer ────────
+run "wrap-up harness-pointer"
 assert_eq "deselect re-run exits 0" "0" "$?"
 assert_ok "settings.json still valid JSON after deselect" jq -e . "$S"
 
@@ -74,9 +74,9 @@ assert_ok "secure-settings kit env key pruned" \
   bash -c "jq -e --arg k '$KIT_ENV_KEY' '(.env // {}) | has(\$k) | not' '$S' >/dev/null"
 
 # OTHER (still-selected) additions fully intact — file AND registration.
-assert_file "keeper startup-write-guard.sh retained" "$PROFILE/hooks/startup-write-guard.sh"
-assert_ok "keeper startup-write-guard hook still registered" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/startup-write-guard.sh\"))' '$S' >/dev/null"
+assert_file "keeper harness-pointer.sh retained" "$PROFILE/hooks/harness-pointer.sh"
+assert_ok "keeper harness-pointer hook still registered" \
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/harness-pointer.sh\"))' '$S' >/dev/null"
 assert_file "keeper wrap-up.md retained" "$PROFILE/commands/wrap-up.md"
 
 # USER-OWN registrations untouched — deselect prunes only what the KIT shipped.
@@ -88,7 +88,7 @@ assert_ok "user-own hook registration preserved" \
 
 # ── 4. Idempotent on re-deselect — a second identical run changes nothing ──────
 cp "$S" "$SB/after1.json"
-run "wrap-up startup-write-guard"
+run "wrap-up harness-pointer"
 assert_eq "second identical deselect exits 0" "0" "$?"
 if diff <(jq -S . "$SB/after1.json") <(jq -S . "$S") >/dev/null 2>&1; then
   pass "re-deselect is idempotent (settings.json unchanged)"

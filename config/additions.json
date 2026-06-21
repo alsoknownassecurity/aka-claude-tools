@@ -23,9 +23,9 @@
     {
       "id": "command-guard",
       "name": "command-guard",
-      "prompt": "command-guard — block credential exfil + curl|bash in Bash [bun]?",
+      "prompt": "command-guard — block credential exfil, curl|bash + writes to shell startup files in Bash [bun]?",
       "recommended": true,
-      "description": "PreToolUse guard on Bash. Denies credential exfil (key shape + outbound tool) and pipe-to-shell (curl | bash); alerts on nc/socat/sendmail/env-dump/inline-interpreter. Requires bun; skipped at install if bun is absent.",
+      "description": "PreToolUse guard on Bash. Denies credential exfil (key shape + outbound tool), pipe-to-shell (curl | bash), and writes to shell startup files (~/.zshrc, ~/.bashrc, … — a persistence vector the secure-settings Edit/Write deny can't reach via a Bash redirection); alerts on nc/socat/sendmail/env-dump/inline-interpreter. Requires bun; skipped at install if bun is absent (then the startup-file-write protection is not active — the Edit/Write tool deny in secure-settings still holds).",
       "hook": "hooks/command-guard.ts",
       "matcher": "Bash",
       "event": "PreToolUse",
@@ -85,16 +85,6 @@
       "recommended": true,
       "description": "Read-only auditor + skill. Walks your shell rc and every file it sources (cycle-safe) and flags: hardcoded credentials (values redacted), persistence-suspicious patterns (pipe-to-shell, eval-of-fetched, DYLD/LD_PRELOAD, writes into other rc files), duplicate or dangling aliases, and git-baseline drift. A detective tripwire for the shell-startup slice — nothing is modified; not a substitute for launchd/cron/ssh review.",
       "skill": "skills/shell-audit"
-    },
-    {
-      "id": "startup-write-guard",
-      "name": "startup-write-guard",
-      "prompt": "startup-write-guard — block Bash writes to shell rc files [persistence]?",
-      "recommended": true,
-      "description": "PreToolUse guard on Bash. Blocks commands that write/append/redirect into shell startup files (~/.zshrc, ~/.zshenv, ~/.bashrc, ~/.profile, …), closing the gap the secure-settings Edit/Write deny leaves open: a Bash `echo >> ~/.zshrc` redirection bypasses that deny. Reads are unaffected; intentional edits go through your own shell. Guidance, not a hard boundary.",
-      "hook": "hooks/startup-write-guard.sh",
-      "matcher": "Bash",
-      "event": "PreToolUse"
     }
   ]
 }

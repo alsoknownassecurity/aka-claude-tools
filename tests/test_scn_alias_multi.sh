@@ -3,7 +3,7 @@
 # (--alias mode), idempotent, and correct across MULTIPLE aka-managed configs.
 #
 # install.sh owns alias creation/checking so the agent never edits the rc itself
-# (which would force loosening startup-write-guard / command-guard). This pins:
+# (which would force loosening command-guard's startup-file-write block). This pins:
 #   A. --alias writes one managed block; re-running for the same dir+alias is
 #      IDEMPOTENT — it never accumulates duplicate entries across installs/upgrades.
 #   B. MULTIPLE aka-managed configs coexist: distinct aliases (aka, work, play) get
