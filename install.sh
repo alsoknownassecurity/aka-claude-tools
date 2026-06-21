@@ -502,6 +502,20 @@ apply_additions() {
     done < <(jq -r '.additions[] | [.id, (.recommended|tostring), (.prompt // .name)] | @tsv' "$CONFIG_SRC/additions.json")
   fi
 
+  # ── hard-dependency gate ──
+  # Runs AFTER selection is known but BEFORE any dir/payload/rc write, so a missing
+  # required runtime aborts cleanly with no partial apply (in interactive mode the
+  # profile dir isn't created until the build mkdir below; --apply pre-creates an
+  # empty dir at apply_entry, which is benign — no settings/payload/rc are written).
+  # command-guard is a default-on SECURITY hook whose runtime is bun; shipping it
+  # silently disabled is not an option, so a missing bun ABORTS rather than soft-
+  # skips. bun is required ONLY when command-guard is selected — a non-bun selection
+  # still installs. ensure_dep offers to install bun first (interactive); it die()s
+  # only on decline / non-interactive-absent.
+  if is_selected command-guard "$_sel_ids"; then
+    ensure_dep bun "bun — required runtime for the command-guard Bash egress hook" 1
+  fi
+
   # ── build ──
   mkdir -p "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows"
 
@@ -539,29 +553,18 @@ apply_additions() {
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
   fi
   if is_selected command-guard "$_sel_ids"; then
-    # bun is the runtime for command-guard, so it is a hard dependency of THIS addition.
-    # Selecting command-guard offers to install bun (interactive, default yes). If it
-    # ends up absent (declined / no package manager / non-interactive), command-guard
-    # is NOT registered and we say so LOUDLY — a security guard quietly skipped is
-    # worse than a noisy one. The leak-guard floor still enforces secret content +
-    # pipe-to-shell; what's lost is command-guard's precise key+outbound-tool pairing.
-    ensure_dep bun "bun — runtime required by the command-guard egress hook" 0 || true
-    local bun_bin; bun_bin="$(command -v bun 2>/dev/null || true)"
-    if [ -n "$bun_bin" ]; then
-      place_file "$CONFIG_SRC/hooks/command-guard.ts" "$config_dir/hooks" +x
-      # Register with bun's ABSOLUTE path. Claude Code runs hooks in a shell that
-      # may not have bun on PATH (non-interactive subshells); a bare shebang would
-      # silently fail to launch and the guard would be a no-op. Both tokens are
-      # shell-quoted (bun path + the script's dir) so spaces/metachars don't split.
-      add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/command-guard.ts" \
-        '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
-      ok "command-guard enabled (bun: $bun_bin)"
-    else
-      warn "⚠ command-guard NOT enabled — its runtime 'bun' is missing, so the enhanced Bash"
-      warn "  credential-exfil guard will not run. The leak-guard floor still covers secret"
-      warn "  content + pipe-to-shell; install bun (https://bun.sh/install) and re-run to add"
-      warn "  command-guard's precise key+outbound-tool detection."
-    fi
+    # bun is guaranteed present here — the hard-dependency gate above aborts the
+    # install if command-guard is selected without bun (no soft-skip: a default-on
+    # security guard silently disabled is worse than a failed install).
+    local bun_bin; bun_bin="$(command -v bun)"
+    place_file "$CONFIG_SRC/hooks/command-guard.ts" "$config_dir/hooks" +x
+    # Register with bun's ABSOLUTE path. Claude Code runs hooks in a shell that
+    # may not have bun on PATH (non-interactive subshells); a bare shebang would
+    # silently fail to launch and the guard would be a no-op. Both tokens are
+    # shell-quoted (bun path + the script's dir) so spaces/metachars don't split.
+    add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/command-guard.ts" \
+      '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
+    ok "command-guard enabled (bun: $bun_bin)"
   fi
   if is_selected rtk-safe "$_sel_ids"; then
     ensure_dep rtk "rtk (RTK rewriting)" 0 || true
