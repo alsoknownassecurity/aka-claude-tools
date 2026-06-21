@@ -31,10 +31,11 @@ don't specify one:
   changed underneath it; that's normal, doesn't affect the install, and the next
   `claude` launch loads the rebuilt config.
 - Which **additions** to layer on (read `config/additions.json` in this repo for
-  the catalog + recommended defaults): secure base settings, web-egress
-  sanitizer, command-guard (needs `bun`), RTK command rewriting (inert until
-  `rtk` is installed), status line, `/wrap-up`, the secure-deep-research
-  workflow, and the opt-in harness-pointer. Additions with a
+  the catalog + recommended defaults): secure base settings, leak-guard,
+  command-guard (needs `bun`), rtk-safe (inert until `rtk` is installed),
+  responsive status line, startup-write-guard, shell-audit, the opt-out
+  `/wrap-up` command, the opt-out secure-deep-research workflow, and the
+  opt-out harness-pointer. Additions with a
   `skill` field are **directory copies**: copy the whole directory into
   `<dir>/skills/` (replace any existing copy so re-installs don't leave stale
   files). Additions with a `workflow` field are **file copies** into
@@ -111,9 +112,9 @@ the user's go-ahead.
   secret-prone state: `.credentials.json`, `shell-snapshots/`, `session-env/`,
   `paste-cache/`, `file-history/`, `telemetry/` — those can capture exported tokens
   or pasted/edited secrets.
-- If a config-driven hook (web-egress / harness-pointer) is enabled, copy
+- If a config-driven hook (leak-guard / harness-pointer) is enabled, copy
   `shared/aka-claude-tools.config.example` → `<dir>/aka-claude-tools.config`.
-- **Web egress sanitizer (if selected):** register it TWICE in
+- **leak-guard (if selected):** register it TWICE in
   `hooks.PreToolUse` — once with matcher `WebSearch|WebFetch` and once with
   matcher `Bash` (the script self-gates: Bash commands without an outbound tool
   exit immediately).
@@ -121,13 +122,13 @@ the user's go-ahead.
   `bun` isn't installed. Register the hook command as
   `<absolute path to bun> <dir>/hooks/command-guard.ts` — hook subshells may
   not have `bun` on PATH, so a bare shebang can silently fail to launch.
-- **RTK rewriting (if selected):** also merge `config/rtk-allowlist.json` into
+- **rtk-safe (if selected):** also merge `config/rtk-allowlist.json` into
   the profile's `permissions.allow` (union, never replace). It contains only
   strictly read-only `rtk` forms; do NOT widen it to `Bash(rtk:*)` — rtk fronts
   curl/aws/psql/docker, so a blanket prefix is effectively a general Bash allow.
-- **Startup-write guard (if selected):** a plain `hooks.PreToolUse` Bash
+- **startup-write-guard (if selected):** a plain `hooks.PreToolUse` Bash
   registration of `<dir>/hooks/startup-write-guard.sh` — no special handling.
-- **Shell-audit skill (if selected):** copied as a skill dir (per the skills rule
+- **shell-audit (if selected):** copied as a skill dir (per the skills rule
   above); also `chmod +x <dir>/skills/shell-audit/audit.sh` so the skill can run
   the bundled auditor.
 - **Statusline location (if the statusline is enabled):** offer to pin an exact
