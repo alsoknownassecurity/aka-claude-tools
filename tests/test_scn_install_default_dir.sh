@@ -9,12 +9,12 @@
 #   • NO shell alias is written — plain `claude` already launches ~/.claude, so
 #     the rc is left untouched (is_default=1 skips the whole alias block).
 #   • a clean rebuild is an UPGRADE not a fresh install: the dir is moved to a
-#     timestamped backup, recreated with the kit, and the user's OWN runtime
-#     state (settings.json, CLAUDE.md, conversations, memory/, history, todos) is
-#     restored from the backup automatically.
-#   • secret-bearing caches (shell-snapshots / session-env / paste-cache /
-#     file-history) are DELIBERATELY left in the backup — never restored into the
-#     rebuilt profile.
+#     timestamped backup, recreated with the kit, and ALL of the profile's OWN
+#     content (settings.json, CLAUDE.md, conversations, memory/, history, todos,
+#     and its caches) is restored from the backup automatically.
+#   • a rebuild returns a profile's own data to ITSELF, so even shell-snapshots /
+#     session-env / paste-cache / file-history come back — no secret-spreading,
+#     it's the same dir; only stale KIT files are replaced fresh.
 #   • the default dir's onboarding metadata lives at $HOME/.claude.json (outside
 #     the config dir), so it is untouched by the rebuild.
 #
@@ -141,13 +141,13 @@ assert_ok   "kit denies unioned into restored settings" \
   bash -c "jq -e '((.permissions.deny // []) | length) > 0' '$S' >/dev/null"
 assert_file "command placed: wrap-up.md"   "$P/commands/wrap-up.md"
 
-# ── secret-bearing caches NOT restored into the rebuilt profile ──────────────
-for d in shell-snapshots session-env paste-cache file-history; do
-  [ -e "$P/$d" ] && fail "secret cache NOT restored: $d" "$d came back into the rebuilt profile" \
-                 || pass "secret cache NOT restored: $d"
-done
+# ── the profile's own caches come home (rebuild = same dir's data returns) ────
+assert_file "shell-snapshots restored" "$P/shell-snapshots/snap.sh"
+assert_file "session-env restored"     "$P/session-env/env.sh"
+assert_file "paste-cache restored"     "$P/paste-cache/p.txt"
+assert_file "file-history restored"    "$P/file-history/f.snap"
 
-# ── but the secret caches DO survive in the backup (data not destroyed) ───────
+# ── and they also still survive in the backup (cp, not mv — data not destroyed) ─
 assert_file "shell-snapshots remains in the backup" "$bak/shell-snapshots/snap.sh"
 assert_file "session-env remains in the backup"     "$bak/session-env/env.sh"
 assert_file "paste-cache remains in the backup"     "$bak/paste-cache/p.txt"

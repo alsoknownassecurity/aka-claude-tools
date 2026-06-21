@@ -9,8 +9,9 @@
 #     EVERY session item (history.jsonl, projects/, sessions/, todos/, tasks/);
 #   • REFRESH kit-managed files to the CURRENT version (a stale/edited kit hook is
 #     overwritten with the shipped kit file, byte-for-byte);
-#   • NOT restore secret-bearing caches (shell-snapshots/, paste-cache/, file-history/,
-#     session-env/, telemetry/) — they stay only in the backup;
+#   • RESTORE the profile's own caches too (shell-snapshots/, paste-cache/,
+#     file-history/, session-env/) — a rebuild returns a profile's data to itself,
+#     so nothing is dropped; the restored content must NOT be merged into settings.json;
 #   • leave the timestamped backup behind as a safety net.
 # Plus: the rollback trap (ct_rebuild_rollback) restores the backup over a half-built
 # dir if the rebuild is interrupted before completion — all-or-nothing.
@@ -114,21 +115,22 @@ else
        "profile copy differs from config/hooks/leak-guard.sh"
 fi
 
-# ── (4c) SECRET CACHES NOT RESTORED (stay only in the backup) ─────────────────
+# ── (4c) the profile's OWN caches come home (rebuild returns its data to itself) ─
 for cache in shell-snapshots paste-cache file-history session-env; do
-  [ -e "$P/$cache" ] && fail "secret cache '$cache' NOT restored into profile" "$cache came back" \
-                     || pass "secret cache '$cache' NOT restored into profile"
+  assert_file "cache '$cache' restored into rebuilt profile" "$P/$cache"
 done
-# ...but they're preserved in the backup as a safety net.
-assert_file "shell-snapshots secret kept in backup" "$bak/shell-snapshots/snap.sh"
-assert_file "paste-cache secret kept in backup"     "$bak/paste-cache/p.txt"
-assert_file "file-history secret kept in backup"    "$bak/file-history/f.env"
-assert_file "session-env secret kept in backup"     "$bak/session-env/e.env"
-# Defense-in-depth: no restored secret value leaked into the live profile tree.
-if grep -rqF 'sk-secret' "$P" 2>/dev/null; then
-  fail "no secret value leaked into the rebuilt profile" "found sk-secret under $P"
+# ...and they're also still in the backup (cp, not mv — nothing destroyed).
+assert_file "shell-snapshots kept in backup" "$bak/shell-snapshots/snap.sh"
+assert_file "paste-cache kept in backup"     "$bak/paste-cache/p.txt"
+assert_file "file-history kept in backup"    "$bak/file-history/f.env"
+assert_file "session-env kept in backup"     "$bak/session-env/e.env"
+# The cache's own content comes back verbatim (it's the profile's data)...
+assert_lit  "cache content restored verbatim" "sk-secret" "$P/shell-snapshots/snap.sh"
+# ...but it must NOT have been merged into the kit-managed settings.json.
+if grep -qF 'sk-secret' "$P/settings.json" 2>/dev/null; then
+  fail "cache content not merged into settings.json" "found sk-secret in settings.json"
 else
-  pass "no secret value leaked into the rebuilt profile"
+  pass "cache content not merged into settings.json"
 fi
 
 # ── (5) ROLLBACK TRAP: deterministic, via the source-guarded helper ───────────
