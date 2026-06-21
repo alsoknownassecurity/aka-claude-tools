@@ -65,4 +65,51 @@ HOME="$SB" SHELL=/bin/bash bash "$UNINSTALL" "$SB/.claude-aka" --yes >"$SB/log2"
 assert_eq  "second run exits 0"              "0" "$?"
 assert_grep "second run reports already gone" "already gone" "$SB/log2"
 
+# ── discovery: no arg, a single managed block → that profile is the target ───
+SB="$(sandbox)"; mkdir -p "$SB/.claude-work"
+cat > "$SB/.bashrc" <<EOF
+# >>> aka-claude-tools managed: work >>>
+alias work='CLAUDE_CONFIG_DIR="$SB/.claude-work" claude'
+# <<< aka-claude-tools managed: work <<<
+EOF
+HOME="$SB" SHELL=/bin/bash bash "$UNINSTALL" --yes >"$SB/log" 2>&1
+assert_eq  "discover-one exits 0"            "0" "$?"
+[ -d "$SB/.claude-work" ] && fail "discovered the lone profile (~/.claude-work)" "still present" \
+                          || pass "discovered the lone profile (~/.claude-work)"
+assert_nlit "discovered profile's block removed" "managed: work" "$SB/.bashrc"
+
+# ── discovery: multiple managed blocks + --yes → refuse to guess ─────────────
+SB="$(sandbox)"; mkdir -p "$SB/.claude-work" "$SB/.claude-play"
+cat > "$SB/.bashrc" <<EOF
+# >>> aka-claude-tools managed: work >>>
+alias work='CLAUDE_CONFIG_DIR="$SB/.claude-work" claude'
+# <<< aka-claude-tools managed: work <<<
+# >>> aka-claude-tools managed: play >>>
+alias play='CLAUDE_CONFIG_DIR="$SB/.claude-play" claude'
+# <<< aka-claude-tools managed: play <<<
+EOF
+HOME="$SB" SHELL=/bin/bash bash "$UNINSTALL" --yes >"$SB/log" 2>&1
+rc=$?
+[ "$rc" != 0 ] && pass "multiple + --yes refuses to guess" || fail "multiple + --yes refuses to guess" "exited 0"
+assert_file "neither profile removed (.claude-work)"  "$SB/.claude-work"
+assert_file "neither profile removed (.claude-play)"  "$SB/.claude-play"
+assert_grep "lists the candidates"          "claude-work" "$SB/log"
+
+# ── discovery excludes the ACTIVE profile, leaving a lone other to resolve ────
+SB="$(sandbox)"; mkdir -p "$SB/.claude-aka" "$SB/.claude-work"
+cat > "$SB/.bashrc" <<EOF
+# >>> aka-claude-tools managed: aka >>>
+alias aka='CLAUDE_CONFIG_DIR="$SB/.claude-aka" claude'
+# <<< aka-claude-tools managed: aka <<<
+# >>> aka-claude-tools managed: work >>>
+alias work='CLAUDE_CONFIG_DIR="$SB/.claude-work" claude'
+# <<< aka-claude-tools managed: work <<<
+EOF
+HOME="$SB" SHELL=/bin/bash CLAUDE_CONFIG_DIR="$SB/.claude-aka" \
+  bash "$UNINSTALL" --yes >"$SB/log" 2>&1
+assert_eq  "active-excluded discovery exits 0" "0" "$?"
+assert_file "active profile (.claude-aka) untouched"  "$SB/.claude-aka"
+[ -d "$SB/.claude-work" ] && fail "lone non-active profile removed" "still present" \
+                          || pass "lone non-active profile removed (.claude-work)"
+
 t_summary

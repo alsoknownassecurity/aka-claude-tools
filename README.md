@@ -358,21 +358,27 @@ config has MCP servers or `@`-imports the script can't reason about.)
 
 ## Uninstall
 
-Run the one-shot uninstaller against the profile you want to remove:
+Run the one-shot uninstaller:
 
 ```sh
-./uninstall.sh ~/.claude-aka        # add --yes to skip the confirmation
+./uninstall.sh                      # discover installed profiles and pick one
+./uninstall.sh ~/.claude-work       # or name the profile directly
+# add --yes to skip the confirmation
 ```
 
-It removes the config folder **and** every managed alias block the kit wrote for
-that profile — matched by our `# >>> aka-claude-tools managed: … >>>` markers and
-the dir they point at, so it finds them whatever the alias was named and never
-touches blocks for other profiles or anything outside our markers.
+With no argument it scans the managed alias blocks in your shell rc and lets you
+**pick which profile to remove** (a lone one is preselected); name a path
+explicitly to skip the prompt. It removes the config folder **and** every managed
+alias block the kit wrote for that profile — matched by our
+`# >>> aka-claude-tools managed: … >>>` markers and the dir they point at, so it
+finds them whatever the alias was named and never touches blocks for other
+profiles or anything outside our markers.
 
 Because it's a destructive `rm -rf`, it is deliberately strict about its target:
-it **never** reads the ambient `$CLAUDE_CONFIG_DIR` as the dir to delete (default
-is `~/.claude-aka`), it **refuses** to remove the profile the current session is
-running inside, and removing the default `~/.claude` always requires an
+it **never** reads the ambient `$CLAUDE_CONFIG_DIR` as the dir to delete (it's
+used only to **refuse** removing the profile the current session is running inside,
+which is also excluded from the pick-list), `--yes` won't guess between several
+discovered profiles, and removing the default `~/.claude` always requires an
 interactive confirmation. Prefer running it from a plain shell.
 
 Or do it by hand: `rm -rf ~/.claude-aka` and delete the

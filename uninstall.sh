@@ -8,15 +8,21 @@
 # Blocks for other profiles, and anything outside our markers, are never touched.
 #
 # Usage:  ./uninstall.sh [CONFIG_DIR] [--yes]
-#         CONFIG_DIR  the profile dir to remove. Defaults to ~/.claude-aka.
-#         --yes (-y)  skip the confirmation prompt (for scripted teardown).
+#         CONFIG_DIR  the profile dir to remove. If omitted, the managed alias
+#                     blocks in your shell rc are scanned and you pick which
+#                     profile to remove (a lone one is preselected); with nothing
+#                     discovered it falls back to ~/.claude-aka.
+#         --yes (-y)  skip the confirmation prompt (for scripted teardown). With
+#                     no CONFIG_DIR it can auto-resolve a single discovered (or
+#                     the fallback) profile, but refuses to guess between several.
 #
 # SAFETY — env isolation. This is a destructive `rm -rf`, so unlike install.sh it
 # NEVER reads the ambient $CLAUDE_CONFIG_DIR as the target (that env var leaking
 # into a subprocess is how a profile gets wiped by accident). Two guards:
 #   • $CLAUDE_CONFIG_DIR is used only as a TRIPWIRE — if the resolved target is
-#     the profile THIS process is running inside, we refuse outright. Uninstall a
-#     profile from a plain shell or a different profile, not from within itself.
+#     the profile THIS process is running inside, we refuse outright (and it's
+#     excluded from the discovery pick-list). Uninstall a profile from a plain
+#     shell or a different profile, not from within itself.
 #   • The default ~/.claude is the real Claude Code config; removing it always
 #     requires an interactive confirmation that --yes does NOT bypass.
 set -euo pipefail
@@ -34,23 +40,9 @@ for arg in "$@"; do
     *)          [ -z "$CFG" ] && CFG="$arg" || die "unexpected extra argument: $arg" ;;
   esac
 done
-# Default target is a FIXED path, never $CLAUDE_CONFIG_DIR — see the SAFETY note.
-CFG="${CFG:-$HOME/.claude-aka}"
-CFG="${CFG/#\~/$HOME}"
-CFG="${CFG%/}"                                  # normalize: drop any trailing slash
-
-case "$CFG" in
-  ""|"/"|"$HOME") die "refusing to operate on '${CFG:-<empty>}'." ;;
-esac
 
 disp() { printf '%s' "${1/#$HOME/~}"; }
 norm() { local p="${1/#\~/$HOME}"; printf '%s' "${p%/}"; }   # expand ~, strip trailing /
-
-# Tripwire: never delete the profile this very session is running inside. The
-# ambient $CLAUDE_CONFIG_DIR is consulted ONLY here, and only to REFUSE.
-if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ "$(norm "$CLAUDE_CONFIG_DIR")" = "$CFG" ]; then
-  die "refusing to remove $(disp "$CFG") — it is the profile THIS session is running inside (\$CLAUDE_CONFIG_DIR). Run uninstall from a plain shell or a different profile."
-fi
 
 # ── rc files that might carry our blocks ──────────────────────────────────────
 # The login shell's standard rc files plus any files they `source` (one hop) — a
@@ -71,6 +63,26 @@ rc_candidates() {
     done < <(sourced_paths "${out[$i]}")
   done
   [ ${#out[@]} -gt 0 ] && printf '%s\n' "${out[@]}"
+}
+
+# discover_profiles — print the CLAUDE_CONFIG_DIR each managed block points at,
+# read ONLY from inside our markers (so a user's own alias setting the var is not
+# picked up). One per line, unnormalized; de-dup/normalize happens in the caller.
+discover_profiles() {
+  [ ${#rcs[@]} -gt 0 ] || return 0
+  local f
+  for f in "${rcs[@]}"; do
+    awk '
+      /^# >>> aka-claude-tools managed: .* >>>$/ { inblk=1; next }
+      /^# <<< aka-claude-tools managed: .* <<<$/ { inblk=0; next }
+      inblk {
+        s=$0
+        while (match(s, /CLAUDE_CONFIG_DIR="[^"]*"/)) {
+          print substr(s, RSTART + 19, RLENGTH - 20)    # strip CLAUDE_CONFIG_DIR=" … "
+          s = substr(s, RSTART + RLENGTH)
+        }
+      }' "$f"
+  done
 }
 
 # prune_blocks FILE — remove every managed block whose body points
@@ -103,14 +115,60 @@ prune_blocks() {
 say ""
 printf '%s%s aka-claude-tools uninstaller %s\n' "$C_BOLD" "$C_BLU" "$C_RST"
 
+# rc files + the active session's dir (tripwire input, never a target).
+rcs=()
+while IFS= read -r r; do [ -n "$r" ] && rcs+=("$r"); done < <(rc_candidates)
+active=""
+[ -n "${CLAUDE_CONFIG_DIR:-}" ] && active="$(norm "$CLAUDE_CONFIG_DIR")"
+
+# ── resolve the target ───────────────────────────────────────────────────────
+if [ -n "$CFG" ]; then
+  CFG="$(norm "$CFG")"                                   # explicit arg wins, always
+else
+  # No explicit target: discover managed profiles (excluding the active one).
+  profiles=()
+  while IFS= read -r p; do
+    p="$(norm "$p")"; [ -n "$p" ] || continue
+    [ -n "$active" ] && [ "$p" = "$active" ] && continue
+    dup=0; for q in ${profiles[@]+"${profiles[@]}"}; do [ "$q" = "$p" ] && { dup=1; break; }; done
+    [ "$dup" = 0 ] && profiles+=("$p")
+  done < <(discover_profiles)
+
+  cnt=${#profiles[@]}
+  if [ "$cnt" -eq 0 ]; then
+    CFG="$(norm "$HOME/.claude-aka")"                    # nothing discovered → documented default
+  elif [ "$cnt" -eq 1 ]; then
+    CFG="${profiles[0]}"
+    say "  ${C_DIM}One managed profile found:${C_RST} $(disp "$CFG")"
+  else
+    say "  Managed aka-claude-tools profiles found:"
+    i=1; for p in "${profiles[@]}"; do say "    ${C_BOLD}$i${C_RST}) $(disp "$p")"; i=$((i + 1)); done
+    if [ "$ASSUME_YES" = 1 ]; then
+      die "multiple profiles found — pass the one to remove explicitly, e.g.: ./uninstall.sh $(disp "${profiles[0]}")"
+    fi
+    choice=""
+    prompt choice "  Which profile to uninstall? (number, blank to cancel)" ""
+    [ -n "$choice" ] || die "Aborted — nothing changed."
+    case "$choice" in *[!0-9]*) die "not a number: $choice" ;; esac
+    [ "$choice" -ge 1 ] && [ "$choice" -le "$cnt" ] || die "out of range: $choice"
+    CFG="${profiles[$((choice - 1))]}"
+  fi
+fi
+
+case "$CFG" in
+  ""|"/"|"$HOME") die "refusing to operate on '${CFG:-<empty>}'." ;;
+esac
+
+# Tripwire: never delete the profile this very session is running inside.
+if [ -n "$active" ] && [ "$active" = "$CFG" ]; then
+  die "refusing to remove $(disp "$CFG") — it is the profile THIS session is running inside (\$CLAUDE_CONFIG_DIR). Run uninstall from a plain shell or a different profile."
+fi
+
 # The default ~/.claude footgun guard — always interactive, never --yes-able.
 if [ "$CFG" = "$HOME/.claude" ]; then
   warn "$(disp "$CFG") is your DEFAULT Claude Code config — the installer never aliases it."
   confirm "  Really remove your default ~/.claude profile?" "N" || die "Aborted — nothing changed."
 fi
-
-rcs=()
-while IFS= read -r r; do [ -n "$r" ] && rcs+=("$r"); done < <(rc_candidates)
 
 say "  Profile : $(disp "$CFG")$( [ -d "$CFG" ] && printf '' || printf '  (already gone)')"
 say "  RC scan : ${#rcs[@]} file(s) for managed alias blocks"
