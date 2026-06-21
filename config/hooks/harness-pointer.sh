@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# aka-claude-tools:managed-hook — installer-owned; auto-removed on upgrade if renamed/retired. Safe to delete.
 # harness-pointer.sh — PreToolUse hook for the Bash tool.
 #
 # Points the harness in the right direction. When the agent reaches for a command
