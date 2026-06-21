@@ -21,6 +21,10 @@ so the `.ts` guard deploy is exercised) alongside the shell/json lint
 | `test_install` | Forward `--defaults` install: profile created, every recommended addition deployed with the path remap, no `$comment` leak. |
 | `test_idempotency` | A re-run converges: settings.json canonical-identical (`jq -S`), a single managed alias block, no duplicate hook registrations. |
 | `test_settings_merge` | A layer-in-place install over a profile with the user's OWN denies/allows/hooks unions them in (never drops them), adopts kit rules, strips `$comment`. |
+| `test_helpers` | Unit tests of install.sh's pure helpers — sourced via the source-guard, in a subshell: `merge_settings`, `prune_hook_regs`, `prune_statusline`, and the rebuild rollback handler. |
+| `test_uninstall` | Deselecting an addition removes its files AND prunes its settings registrations; still-selected additions and the user's own settings stay. |
+| `test_select` | `CT_ADDITIONS` selection lever: exact-subset deploy, a non-recommended addition + its config template, empty = none, an unknown id aborts loudly. |
+| `test_reconcile` | A retired kit permission rule is dropped on upgrade; a rule the kit never shipped (the user's own) is kept. |
 | `test_retired_cleanup` | An addition the kit dropped (tombstoned in `managed-permissions.json.retiredAdditions`) has its orphan files removed on upgrade; user-owned files untouched. |
 | `test_guard_registration` | Egress guards wired correctly: leak-guard registered under both `WebSearch\|WebFetch` and `Bash`; command-guard via an absolute `bun` path; shared `hooks/lib` placed. |
 | `test_manifest` | `additions.json` integrity: valid, unique ids, declared files exist, no undeclared orphans (shared `lib/` excepted). |
@@ -40,7 +44,9 @@ metacharacters). End every test with `t_summary`.
 ### Gotchas worth knowing
 - The installer's prompts read from **`/dev/tty`**, not stdin — you cannot drive the
   interactive menu by piping answers. Non-interactive runs use `--defaults`
-  (`CT_NONINTERACTIVE=1`), which selects the recommended set.
+  (`CT_NONINTERACTIVE=1`, recommended set) and `CT_ADDITIONS="id ..."` to pick an
+  exact subset. install.sh is source-guarded, so a test can `source` it inside a
+  subshell to unit-test the pure helpers without running an install.
 - Secret SHAPES in `corpus.json` and `test_tools` are deliberately fake; `test_tools`
   assembles them from fragments at runtime so this directory carries no token a
   history audit would flag.
