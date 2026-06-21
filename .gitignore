@@ -1,4 +1,6 @@
 # Local, machine-, or user-specific — never commit
+# repo-local agent working state (backlog, loop-guard) — not shipped
+.claude/
 aka-claude-tools.config
 claude-tools.config
 *.local
