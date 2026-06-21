@@ -15,3 +15,6 @@ claude-tools.config
 .claude-*/
 .env
 .credentials.json
+
+# Local agent campaign state (backlog, done-log, cleared markers) — never commit
+.claude/

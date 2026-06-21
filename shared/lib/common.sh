@@ -2,7 +2,12 @@
 # common.sh — shared helpers for the aka-claude-tools installer. Sourced, not run.
 
 # ── output ───────────────────────────────────────────────────────────────────
-if [ -t 1 ]; then
+# Color only on a real terminal AND when NO_COLOR is unset (https://no-color.org).
+# Honoring NO_COLOR lets automation/tests (and agents driving the menu with expect)
+# get clean, ANSI-free prompts — the colored "[Y/n]" hint otherwise sits between
+# escape codes and defeats naive matchers, which can misalign answers and silently
+# toggle an addition. Humans on a TTY are unaffected.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_GRN=$'\033[32m'; C_YLW=$'\033[33m'
   C_BLU=$'\033[34m'; C_RED=$'\033[31m'; C_RST=$'\033[0m'
 else
@@ -111,6 +116,73 @@ migrate_sessions() {
   else say "  ${C_DIM}no session history found to migrate${C_RST}"; fi
 }
 
+# preserve_from_backup <backup> <dest> <config_src> — the rebuild's "lose nothing"
+# net. After the explicit known-item restores, sweep EVERY remaining file from the
+# backup into dest, so a user's bespoke setup survives a clean rebuild — not just
+# the kit's hardcoded allowlist. A rebuild restores a profile's OWN data to ITSELF,
+# so there is no secret-SPREADING here (nothing moves to a new place); everything
+# the user had comes home, including auth and history. We migrate everything and
+# leave behind only CRUFT — copy each backup file EXCEPT:
+#   • paths already in dest     — the explicit restores (settings.json, CLAUDE.md,
+#                                 .credentials.json, session state) win, never clobbered;
+#   • kit-managed hook files    — they carry the managed marker and are re-placed
+#                                 fresh by the build, so skipping them sheds
+#                                 retired-kit cruft (that's the "clean" in rebuild);
+#   • any exact path the kit ships ($config_src/<rel>) — the build owns those, so an
+#                                 unselected addition's stale file isn't resurrected.
+# Regular files only (-type f) — empty dirs carry no data. Reports the top-level
+# entries preserved (auditable, per the kit's "never change things silently"
+# principle). bash-3.2 safe (no associative arrays).
+preserve_from_backup() {
+  local backup="$1" dest="$2" config_src="$3" rel top n=0 kept=" "
+  while IFS= read -r rel; do
+    rel="${rel#./}"
+    [ -n "$rel" ] || continue
+    top="${rel%%/*}"
+    [ -e "$dest/$rel" ] && continue                        # explicit restore wins
+    [ -e "$config_src/$rel" ] && continue                  # a path the kit ships → build owns it
+    if case "$rel" in hooks/*) true;; *) false;; esac && grep -q 'aka-claude-tools:managed-hook' "$backup/$rel" 2>/dev/null; then
+      continue                                             # stale kit hook → re-placed fresh
+    fi
+    mkdir -p "$dest/$(dirname "$rel")"
+    if cp -p "$backup/$rel" "$dest/$rel" 2>/dev/null; then
+      n=$((n+1))
+      case "$kept" in *" $top "*) ;; *) kept="$kept$top ";; esac
+    fi
+  done < <(cd "$backup" && find . -type f 2>/dev/null)
+  if [ "$n" -gt 0 ]; then ok "Preserved $n more file(s) you set up:${kept%" "}"; fi
+  return 0   # never let a zero-count sweep return non-zero (set -e would abort the rebuild)
+}
+
+# detect_config_complexity <dir> — emit reasons (one per line) the given config is
+# complex enough that the Claude-driven install (Path A, agent-install.md) would
+# migrate it more faithfully than this script: Path A reads the whole config and
+# reasons about things a deterministic copy can't — MCP server auth/transport,
+# CLAUDE.md @-imports that may need path rewriting, and bespoke top-level layouts.
+# Empty output = nothing notable. Advisory only — the script still preserves
+# everything; this just points complex cases at the smarter path.
+detect_config_complexity() {
+  local dir="$1" out="" e custom=""
+  if [ -f "$dir/.mcp.json" ] \
+     || { [ -f "$dir/settings.json" ] && jq -e '((.mcpServers // {}) | length) > 0' "$dir/settings.json" >/dev/null 2>&1; } \
+     || { [ -f "$dir/.claude.json" ] && jq -e '((.mcpServers // {}) | length) > 0' "$dir/.claude.json" >/dev/null 2>&1; }; then
+    out="${out}MCP servers configured (auth/transport)
+"
+  fi
+  if [ -f "$dir/CLAUDE.md" ] && grep -qE '(^|[[:space:]])@[^[:space:]]+' "$dir/CLAUDE.md" 2>/dev/null; then
+    out="${out}CLAUDE.md uses @-imports
+"
+  fi
+  local known=" settings.json settings.local.json .claude.json .credentials.json CLAUDE.md agents skills commands output-styles hooks workflows projects sessions todos tasks history.jsonl statsig ide logs plugins shell-snapshots session-env paste-cache file-history telemetry .last-cleanup aka-claude-tools.config .git .gitignore .gitattributes .gitmodules .DS_Store "
+  for e in $(ls -A "$dir" 2>/dev/null); do
+    case "$known" in *" $e "*) ;; *) custom="$custom $e";; esac
+  done
+  [ -n "$custom" ] && out="${out}custom top-level content:$custom
+"
+  # String accumulator (not an array) so an empty result is set -u safe on bash 3.2.
+  printf '%s' "$out"
+}
+
 # place_dir <src-dir> <dst-parent> — directory analogue of place_file (skills).
 # Replaces the destination so re-installs never leave stale files behind.
 place_dir() {
@@ -194,6 +266,8 @@ ensure_dep() {
     fi
   elif [ "$tool" = bun ]; then
     warn "${label} not found and no brew/npm — install bun manually: https://bun.sh/install"
+  elif [ "$tool" = jq ]; then
+    warn "${label} not found and no supported package manager — install jq manually: https://jqlang.github.io/jq/download/"
   else
     warn "${label} not found and no supported package manager — install it manually."
   fi
@@ -222,8 +296,15 @@ write_managed_block() {
   local end="# <<< aka-claude-tools managed: ${id} <<<"
   touch "$file"
   local tmp; tmp="$(mktemp)"
+  # Strip any prior block for this exact id, but EOF-safely: buffer the candidate and
+  # drop it only when its end marker appears; an unterminated (corrupt) block is
+  # flushed at EOF, never truncated — same guard as remove_managed_block.
   awk -v b="$begin" -v e="$end" '
-    $0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}
+    $0==b { if (skip) { for (i=0;i<n;i++) print buf[i] } skip=1; n=0; buf[n++]=$0; next }
+    skip && $0==e { skip=0; n=0; next }
+    skip { buf[n++]=$0; next }
+    { print }
+    END { if (skip) for (i=0;i<n;i++) print buf[i] }
   ' "$file" > "$tmp"
   printf '%s\n%s\n%s\n' "$begin" "$content" "$end" >> "$tmp"
   mv "$tmp" "$file"
@@ -234,12 +315,30 @@ write_managed_block() {
 # alias block when the same alias is already provided elsewhere.
 remove_managed_block() {
   local file="$1" id="$2"
-  local begin="# >>> aka-claude-tools managed: ${id} >>>"
-  local end="# <<< aka-claude-tools managed: ${id} <<<"
   [ -f "$file" ] || return 1
-  grep -qF "$begin" "$file" || return 1
+  # Match the managed block for <id> AND its collision-renamed variants <id><N>:
+  # on an alias-name collision the installer appends a numeric suffix (aka -> aka2),
+  # and the documented uninstall only knows the default name. Removing the whole
+  # <id>-family lets `remove_managed_block <rc> aka` also clear a leftover `aka2`
+  # block. Scoped by an exact-then-digits match, so a DIFFERENT profile's block (a
+  # different base name) is never touched. (Limitation: a profile deliberately named
+  # `<id><N>` shares the family — rare, documented.)
+  # Regex-escape the id before it goes into an ERE — an id with a metachar (e.g. a
+  # dotted folder basename) must match literally, not over-match.
+  local id_esc; id_esc="$(printf '%s' "$id" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+  local pat="^# (>>>|<<<) aka-claude-tools managed: ${id_esc}[0-9]* (>>>|<<<)$"
+  grep -qE "$pat" "$file" || return 1
   local tmp; tmp="$(mktemp)"
-  awk -v b="$begin" -v e="$end" '$0==b {skip=1} $0==e {skip=0; next} skip!=1 {print}' "$file" > "$tmp"
+  # Buffer a candidate block and DROP it only once its end marker is seen; if a begin
+  # marker has no matching end before EOF (a corrupt/tampered block), FLUSH the buffer
+  # rather than let `skip` run to EOF and truncate the rest of the user's rc.
+  awk -v p="$pat" '
+    $0 ~ p && />>>$/ { if (skip) { for (i=0;i<n;i++) print buf[i] } skip=1; n=0; buf[n++]=$0; next }
+    skip && $0 ~ p && /<<<$/ { skip=0; n=0; next }
+    skip { buf[n++]=$0; next }
+    { print }
+    END { if (skip) for (i=0;i<n;i++) print buf[i] }
+  ' "$file" > "$tmp"
   mv "$tmp" "$file"
 }
 

@@ -90,7 +90,11 @@ Deterministic and fast. Interactive prompts:
    `session-env/`, `paste-cache/`, `file-history/`, `.credentials.json`).
 4. **Which additions** to layer on (recommended ones pre-selected).
 
-Non-interactive: `./install.sh --defaults` takes every default (clean profile, no migration).
+Non-interactive: `./install.sh --defaults` takes every default (clean profile, no migration);
+it is equivalent to exporting `CT_NONINTERACTIVE=1`, which suppresses every prompt. Add `--clean`
+to force the back-up + clean-rebuild path on an existing profile (it also refreshes kit-managed
+hook/command/skill files to the current version), and `--no-auth-inherit` when the new profile is
+for a *different* account.
 To script an **exact set** of additions, set `CT_ADDITIONS` to a space-separated list of
 addition ids (see [`config/additions.json`](config/additions.json)) — it replaces the menu
 and installs precisely those (an unknown id aborts; empty installs none):
@@ -101,16 +105,25 @@ CT_ADDITIONS="secure-settings leak-guard wrap-up" ./install.sh --defaults
 
 > **Rebuild your default `~/.claude`:** enter `~/.claude` as the target folder and
 > the installer offers to move it to a timestamped backup (`~/.claude.backup-…`),
-> recreate it clean with the additions, and migrate your picks back from the
-> backup. No alias is written — plain `claude` already launches it — and your
-> login survives: `~/.claude.json` lives at `$HOME`, macOS Keychain auth is keyed
-> to the unchanged dir path, and a file-based `.credentials.json` is copied back.
-> A Claude Code session that's already running keeps working (it's loaded in
+> recreate it clean with the additions, and **restore everything you set up** from
+> the backup automatically — settings, CLAUDE.md, conversations/memory/history,
+> your agents/skills/commands/hooks, auth, and any other content (custom dirs,
+> plugins, MCP config). It's your profile returning to itself, so only stale **kit**
+> files are replaced fresh. No alias is written — plain `claude` already launches it
+> — and your login survives: `~/.claude.json` lives at `$HOME`, macOS Keychain auth
+> is keyed to the unchanged dir path, and a file-based `.credentials.json` is copied
+> back. A Claude Code session that's already running keeps working (it's loaded in
 > memory), though it may show hook errors while files are changed underneath it —
 > that's normal and doesn't affect the install. The next time you launch `claude`,
-> the newly-configured setup loads. Sessions/history stay in the backup; delete it
+> the newly-configured setup loads; the backup is kept as a safety net, delete it
 > once you're happy. (Decline the backup and the installer layers the additions
 > onto `~/.claude` in place instead.)
+>
+> **Complex config?** The script preserves files byte-for-byte but can't *reason*
+> about config that needs interpretation — MCP servers, `CLAUDE.md` `@`-imports that
+> may need path rewriting, hook interdependencies. When it detects those it points
+> you at **Path A** (the Claude-driven install above), which reads your whole config
+> and migrates them intelligently. Prefer Path A for a rich existing profile.
 >
 > **Rebuilding any other existing profile works the same way** — target any config
 > dir that already exists (e.g. `~/.claude-work`) and you get the same offer: back
@@ -120,6 +133,13 @@ CT_ADDITIONS="secure-settings leak-guard wrap-up" ./install.sh --defaults
 > wipes it — choose to rebuild only when you mean to). Account metadata and a
 > file-based `.credentials.json` are restored from the backup. This is the clean
 > upgrade path as the kit grows.
+>
+> **Upgrading a pre-rename profile?** Profiles created before the hook rename carry the
+> old hook names (`command-guard.ts`, `leak-guard.sh`, `rtk-safe.hook.sh`).
+> Run `./hook-rename.sh [CONFIG_DIR]` once **before** `./install.sh` to retire those
+> old hooks and their stale `settings.json` registrations; the installer then places the
+> renamed `command-guard`/`leak-guard`/`rtk-safe` hooks cleanly. (Newer profiles self-clean via
+> the managed marker, so this one-time step is only for old ones.)
 
 ---
 
@@ -141,9 +161,10 @@ added, and ones the kit has since **retired are removed** (the history lives in
 [`config/managed-permissions.json`](config/managed-permissions.json); you can keep
 or skip any rule individually, and a rule the kit never shipped is always left
 alone). That's how a trimmed-down deny propagates to an existing profile on
-upgrade — a plain union never could. To remove an entire *addition* (its
-hook/command/skill), delete its files and `settings.json` registration by hand, or
-rebuild the profile from scratch.
+upgrade — a plain union never could. To remove an entire *addition*, **re-run the
+installer without it** — deselect it in the menu, or drop it from your `CT_ADDITIONS`
+list — and the installer deletes its files and prunes its `settings.json` registration
+for you (the deselect path is idempotent: removing something already gone is a no-op).
 
 ## Authentication — no re-login
 
@@ -320,7 +341,9 @@ command:
 ```
 aka-claude-tools/
 ├── agent-install.md            # Path A — spec your Claude Code instance executes
+├── agent-uninstall.md          # agent-driven teardown — delegates to uninstall.sh
 ├── install.sh                  # Path B — terminal installer
+├── uninstall.sh                # one-shot teardown (env-isolated, marker-based)
 ├── config/                     # the payload layered into a profile
 │   ├── settings.base.json      # secure base settings
 │   ├── rtk-allowlist.json      # read-only rtk allow rules (with RTK rewriting)
@@ -361,9 +384,46 @@ to *layer-in-place*, so a quick re-run that just adds one addition never wipes y
 dir. Pick the rebuild when you want the clean upgrade. (Prefer **Path A** if your
 config has MCP servers or `@`-imports the script can't reason about.)
 
+> **No version tracking.** The kit records no installed-version number, so it can't
+> detect a *downgrade*. An installer only retires the additions *it* knows about, so
+> re-running an **older** kit over a profile a **newer** kit set up keeps that newer
+> kit's entries in place (the old kit has never heard of them). This is harmless but
+> can leave additions the older kit wouldn't ship on its own. If you ever want a
+> guaranteed-clean state, choose the **rebuild** on re-run — it starts from an empty
+> dir and layers only the additions the running kit ships.
+
 ## Uninstall
 
-Delete the config folder (`rm -rf ~/.claude-aka`) and remove the
+Run the one-shot uninstaller:
+
+```sh
+./uninstall.sh                      # discover installed profiles and pick one
+./uninstall.sh ~/.claude-work       # or name the profile directly
+# add --yes to skip the confirmation
+```
+
+With no argument it scans the managed alias blocks in your shell rc and lets you
+**pick which profile to remove** (a lone one is preselected); name a path
+explicitly to skip the prompt. It removes the config folder **and** every managed
+alias block the kit wrote for that profile — matched by our
+`# >>> aka-claude-tools managed: … >>>` markers and the dir they point at, so it
+finds them whatever the alias was named and never touches blocks for other
+profiles or anything outside our markers.
+
+Because it's a destructive `rm -rf`, it is deliberately strict about its target:
+it **never** reads the ambient `$CLAUDE_CONFIG_DIR` as the dir to delete (it's
+used only to **refuse** removing the profile the current session is running inside,
+which is also excluded from the pick-list), `--yes` won't guess between several
+discovered profiles, and removing the default `~/.claude` always requires an
+interactive confirmation. Prefer running it from a plain shell.
+
+From inside an authenticated session you can instead ask Claude to
+`Read agent-uninstall.md and remove my <name> profile` — it audits what's
+irreplaceable, offers a backup, then delegates the actual removal to `uninstall.sh`
+(so the same guards apply). It will not remove the profile the current session is
+running in — run that from a plain shell.
+
+Or do it by hand: `rm -rf ~/.claude-aka` and delete the
 `# >>> aka-claude-tools managed: <alias> >>>` block from your shell rc. Your default
 `~/.claude` is never touched by the installer.
 
