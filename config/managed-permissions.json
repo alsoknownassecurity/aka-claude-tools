@@ -1,7 +1,8 @@
 {
   "$comment": [
     "Permission rules the kit has SHIPPED in the past and has since removed. On a layer-in-place upgrade, install.sh offers to retire any of these still present in a profile (default: drop = adopt the updated set), while leaving rules the kit never shipped (the user's own) untouched.",
-    "Maintenance contract: whenever you delete or change a deny/allow rule in settings.base.json or rtk-allowlist.json, append the OLD string here so existing profiles can drop it on their next upgrade. Never remove entries from this list — it is the kit's permission-rule history."
+    "Maintenance contract: whenever you delete or change a deny/allow rule in settings.base.json or rtk-allowlist.json, append the OLD string here so existing profiles can drop it on their next upgrade. Never remove entries from this list — it is the kit's permission-rule history.",
+    "retiredAdditions: whole additions the kit shipped before and has since dropped from additions.json. Because the uninstall loop only sees ids still in the manifest, a fully-removed addition's files would orphan in existing profiles. List each one's owned paths (relative to the config dir) here and install.sh deletes them on upgrade. Skills/commands only — retired HOOKS self-clean via their managed marker. Never remove entries; this is the kit's retired-addition history."
   ],
   "retired": {
     "deny": [
@@ -12,5 +13,8 @@
     ],
     "allow": [],
     "ask": []
-  }
+  },
+  "retiredAdditions": [
+    { "id": "loop-designer", "paths": ["skills/loop-designer"] }
+  ]
 }

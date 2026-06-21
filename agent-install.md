@@ -33,8 +33,8 @@ don't specify one:
 - Which **additions** to layer on (read `config/additions.json` in this repo for
   the catalog + recommended defaults): secure base settings, web-egress
   sanitizer, command-guard (needs `bun`), RTK command rewriting (inert until
-  `rtk` is installed), status line, `/wrap-up`, the loop-designer skill, the
-  secure-deep-research workflow, and the opt-in harness-pointer. Additions with a
+  `rtk` is installed), status line, `/wrap-up`, the secure-deep-research
+  workflow, and the opt-in harness-pointer. Additions with a
   `skill` field are **directory copies**: copy the whole directory into
   `<dir>/skills/` (replace any existing copy so re-installs don't leave stale
   files). Additions with a `workflow` field are **file copies** into

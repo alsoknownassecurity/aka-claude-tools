@@ -60,14 +60,6 @@
       "command": "commands/wrap-up.md"
     },
     {
-      "id": "loop-designer",
-      "name": "loop-designer skill",
-      "prompt": "loop-designer skill (compile a spec into a minimal autonomous-run prompt)?",
-      "recommended": true,
-      "description": "Skill that compiles a finished spec/plan (any doc with verifiable criteria, constraints, and human gates) into the smallest kickoff prompt that runs it well in a fresh orchestrator session — must-have discipline core + an evidence-based catalog of opt-in guardrails distilled from real multi-hour autonomous runs. Includes a Harden mode that slims hand-written kickoff prompts. Pure prompt/skill files — no hooks, no runtime cost.",
-      "skill": "skills/loop-designer"
-    },
-    {
       "id": "secure-deep-research",
       "name": "secure-deep-research workflow",
       "prompt": "secure-deep-research workflow (privacy-aware multi-source research, sensitive-topic gating)?",
