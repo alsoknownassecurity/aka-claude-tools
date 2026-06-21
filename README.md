@@ -91,6 +91,13 @@ Deterministic and fast. Interactive prompts:
 4. **Which additions** to layer on (recommended ones pre-selected).
 
 Non-interactive: `./install.sh --defaults` takes every default (clean profile, no migration).
+To script an **exact set** of additions, set `CT_ADDITIONS` to a space-separated list of
+addition ids (see [`config/additions.json`](config/additions.json)) — it replaces the menu
+and installs precisely those (an unknown id aborts; empty installs none):
+
+```bash
+CT_ADDITIONS="secure-settings leak-guard wrap-up" ./install.sh --defaults
+```
 
 > **Rebuild your default `~/.claude`:** enter `~/.claude` as the target folder and
 > the installer offers to move it to a timestamped backup (`~/.claude.backup-…`),
