@@ -39,9 +39,9 @@ done
 
 # ── 2. No un-gated GNU-only INVOCATIONS ──────────────────────────────────────
 # We grep for the *command at the head of a pipeline / statement* — not bare
-# substrings — so a GNU flag mentioned inside a regex string or comment (e.g.
-# the startup-write-guard pattern that DETECTS `sed -i` in user input) is not a
-# false positive. A real invocation begins a command: line start, after | ; & (
+# substrings — so a GNU flag mentioned inside a regex string or comment (e.g. a
+# guard pattern that DETECTS `sed -i` in user input) is not a false positive. A
+# real invocation begins a command: line start, after | ; & (
 # or `$(`. We deliberately do NOT match inside single/double-quoted regex args.
 #
 # Helper: does FILE contain a real invocation of CMD with the GNU-only flag?

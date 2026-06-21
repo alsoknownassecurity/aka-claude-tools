@@ -9,8 +9,8 @@ the additions, `./install.sh --alias` creates the launcher alias. The user is
 already authenticated, so there is no token/login dance.
 
 **Do not write the user's shell rc yourself.** Creating the alias means editing
-`~/.zshrc` / `~/.bashrc`, which the `startup-write-guard` and `command-guard`
-additions block (an agent writing to startup files is a persistence vector). Always
+`~/.zshrc` / `~/.bashrc`, which the `command-guard` addition blocks (an agent writing
+to startup files is a persistence vector). Always
 create the alias by invoking `./install.sh --alias` — install.sh is the sole
 sanctioned rc writer — never with an `echo >> ~/.zshrc` or an Edit of the rc.
 
@@ -39,9 +39,9 @@ don't specify one:
   `claude` launch loads the rebuilt config.
 - Which **additions** to layer on (read `config/additions.json` in this repo for
   the catalog + recommended defaults): secure base settings, leak-guard,
-  command-guard (needs `bun`), rtk-safe (inert until `rtk` is installed),
-  responsive status line, startup-write-guard, shell-audit, the opt-out
-  `/wrap-up` command, the opt-out secure-deep-research workflow, and the
+  command-guard (needs `bun`; also blocks writes to shell startup files),
+  rtk-safe (inert until `rtk` is installed), responsive status line, shell-audit,
+  the opt-out `/wrap-up` command, the opt-out secure-deep-research workflow, and the
   opt-out harness-pointer. Additions with a
   `skill` field are **directory copies**: copy the whole directory into
   `<dir>/skills/` (replace any existing copy so re-installs don't leave stale
@@ -111,7 +111,7 @@ the user's go-ahead.
   user's own); registers leak-guard **twice** (`WebSearch|WebFetch` + `Bash`);
   registers command-guard with bun's **absolute** path (skipped with a notice if `bun`
   is absent); merges the read-only `rtk-allowlist.json` for rtk-safe (never a
-  blanket `Bash(rtk:*)`); registers startup-write-guard; copies the shell-audit
+  blanket `Bash(rtk:*)`); copies the shell-audit
   skill and chmods its `audit.sh`; and seeds `aka-claude-tools.config` when a
   config-driven hook is selected. **You own the judgment** (which additions, what to
   migrate); the **engine owns the mechanics**.
@@ -148,8 +148,9 @@ the user's go-ahead.
     alias and give the user the `CLAUDE_CONFIG_DIR="<dir>" claude` invocation.
 
   Do **not** add the alias with `echo >> ~/.zshrc` or by editing the rc with the
-  Edit tool — the `startup-write-guard` / `command-guard` additions block an agent
-  writing to startup files, by design. Routing through `--alias` is the only path.
+  Edit tool — the `command-guard` addition blocks an agent writing to startup files,
+  by design (and the secure-settings Edit/Write deny blocks the Edit tool path).
+  Routing through `--alias` is the only path.
 
 ## 5. Verify, then report
 

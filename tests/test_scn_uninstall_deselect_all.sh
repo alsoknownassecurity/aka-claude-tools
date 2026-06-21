@@ -16,9 +16,9 @@ P="$SB/.claude-aka"
 
 # Recommended subset with NO optional runtime (no bun/rtk/trufflehog), so it's
 # CI-stable, yet spans every placeable kind: base settings (perms/env), two hooks
-# (leak-guard, startup-write-guard), a statusLine (statusline), a command (wrap-up),
+# (leak-guard, harness-pointer), a statusLine (statusline), a command (wrap-up),
 # and a skill (shell-audit).
-SEL="secure-settings leak-guard startup-write-guard statusline wrap-up shell-audit"
+SEL="secure-settings leak-guard harness-pointer statusline wrap-up shell-audit"
 run() { CT_ADDITIONS="$1" SHELL=/bin/bash HOME="$SB" \
         bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$SB/log" 2>&1; }
 
@@ -26,7 +26,7 @@ run() { CT_ADDITIONS="$1" SHELL=/bin/bash HOME="$SB" \
 run "$SEL"; rc1=$?
 assert_eq   "full install exits 0" "0" "$rc1"
 assert_file "leak-guard hook placed"          "$P/hooks/leak-guard.sh"
-assert_file "startup-write-guard hook placed" "$P/hooks/startup-write-guard.sh"
+assert_file "harness-pointer hook placed" "$P/hooks/harness-pointer.sh"
 assert_file "statusline hook placed"         "$P/hooks/statusline.sh"
 assert_file "wrap-up command placed"         "$P/commands/wrap-up.md"
 assert_file "shell-audit skill placed"       "$P/skills/shell-audit"
@@ -66,7 +66,7 @@ assert_eq "deselect-all run exits 0" "0" "$rc2"
 assert_file "profile dir still exists after deselect-all" "$P"
 
 # 3b. Every kit-owned FILE removed.
-for f in hooks/leak-guard.sh hooks/startup-write-guard.sh hooks/statusline.sh \
+for f in hooks/leak-guard.sh hooks/harness-pointer.sh hooks/statusline.sh \
          commands/wrap-up.md skills/shell-audit; do
   if [ -e "$P/$f" ]; then fail "kit file removed: $f" "still present"
   else pass "kit file removed: $f"; fi
@@ -76,8 +76,8 @@ done
 assert_ok "settings.json still valid JSON after deselect-all" jq -e . "$P/settings.json"
 assert_ok "leak-guard registration pruned" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$P/settings.json' >/dev/null"
-assert_ok "startup-write-guard registration pruned" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/startup-write-guard.sh\")) | not' '$P/settings.json' >/dev/null"
+assert_ok "harness-pointer registration pruned" \
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/harness-pointer.sh\")) | not' '$P/settings.json' >/dev/null"
 assert_ok "statusLine pruned from settings" \
   bash -c "jq -e '((.statusLine.command // \"\") | endswith(\"/statusline.sh\")) | not' '$P/settings.json' >/dev/null"
 # The permission rules secure-settings shipped are gone, while the user's own deny

@@ -23,7 +23,7 @@
 #   • alias creation/checking — see setup_alias / the --alias mode. install.sh is
 #     the SOLE sanctioned writer of your shell rc, so the Claude-driven install
 #     invokes it for the alias instead of editing the rc itself, which keeps
-#     startup-write-guard / command-guard strict.
+#     command-guard strict.
 # Migrating a rich EXISTING config (reading it, deciding what to carry over,
 # rewriting @-import / MCP paths) and backing-up-and-rebuilding a profile are
 # JUDGMENT calls, owned by the Claude-driven install (Path A, agent-install.md) —
@@ -46,7 +46,7 @@
 #   --alias            Create/check the launcher alias for $CT_ALIAS → $CT_CONFIG_DIR
 #                      and exit. install.sh is the SOLE sanctioned writer of your
 #                      shell rc, so the agent invokes THIS rather than editing the rc
-#                      itself — which keeps startup-write-guard / command-guard strict.
+#                      itself — which keeps command-guard strict.
 #                      Reviews the rc + its full source chain; writes an idempotent
 #                      managed block, or exits non-zero on an unresolved name
 #                      collision (the caller picks another name). Requires CT_CONFIG_DIR
@@ -354,7 +354,7 @@ seed_auth() {
 # REPLACES the block (write_managed_block strips any prior same-id block first),
 # so repeated installs/upgrades never accumulate duplicate entries. Keeping this
 # in install.sh means the agent invokes it instead of hand-writing the rc, so
-# startup-write-guard / command-guard stay strict. On a name collision (the alias is
+# command-guard stay strict. On a name collision (the alias is
 # already used for a DIFFERENT target):
 #   • interactive → offer an alternate name (default <alias>2), or skip;
 #   • strict      → report and return 1 so the caller (the agent) picks another.
@@ -610,11 +610,6 @@ apply_additions() {
     chmod +x "$config_dir/skills/shell-audit/audit.sh" 2>/dev/null || true
     ok "Placed shell-audit skill"
   fi
-  if is_selected startup-write-guard "$_sel_ids"; then
-    place_file "$CONFIG_SRC/hooks/startup-write-guard.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$config_dir/hooks/startup-write-guard.sh" \
-      '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
-  fi
   if is_selected secure-deep-research "$_sel_ids"; then
     # A .js dropped in <config>/workflows/ auto-registers as BOTH the named
     # workflow and the /secure-deep-research skill (Claude Code scans this dir).
@@ -790,7 +785,7 @@ apply_entry() {
 
 # ── --alias entry: create/check the launcher alias, the sole sanctioned rc write ─
 # install.sh owns shell-rc writes so the agent never edits the rc itself (which
-# would force loosening startup-write-guard / command-guard). The agent invokes this
+# would force loosening command-guard). The agent invokes this
 # after --apply; on an unresolved name collision it exits non-zero so the agent
 # picks another name and re-invokes. Idempotent: re-running for the same dir+alias
 # replaces the managed block rather than adding a duplicate.
