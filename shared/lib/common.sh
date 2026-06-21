@@ -266,6 +266,8 @@ ensure_dep() {
     fi
   elif [ "$tool" = bun ]; then
     warn "${label} not found and no brew/npm — install bun manually: https://bun.sh/install"
+  elif [ "$tool" = jq ]; then
+    warn "${label} not found and no supported package manager — install jq manually: https://jqlang.github.io/jq/download/"
   else
     warn "${label} not found and no supported package manager — install it manually."
   fi

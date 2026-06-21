@@ -950,7 +950,7 @@ setup_one_config() {
   if [ -d "$config_dir/hooks" ]; then
     local _hf _hb
     for _hf in "$config_dir"/hooks/*; do
-      [ -e "$_hf" ] || continue
+      [ -f "$_hf" ] || continue                                                # regular files only — skips the lib/ subdir
       grep -q 'aka-claude-tools:managed-hook' "$_hf" 2>/dev/null || continue   # not ours → leave it
       _hb="$(basename "$_hf")"
       [ -e "$CONFIG_SRC/hooks/$_hb" ] && continue                              # still shipped → keep
