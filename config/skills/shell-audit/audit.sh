@@ -34,6 +34,11 @@ sourced_of(){ # FILE -> existing files it sources (one hop), paths expanded
   local f
   while IFS= read -r f; do
     f="${f%%#*}"; f="${f%"${f##*[![:space:]]}"}"
+    # Strip one layer of surrounding quotes: `source "file"` / `. 'file'`.
+    case "$f" in
+      \"*\") f="${f#\"}"; f="${f%\"}" ;;
+      \'*\') f="${f#\'}"; f="${f%\'}" ;;
+    esac
     f="${f/#\~/$HOME}"; f="${f//\$HOME/$HOME}"; f="${f//\$\{HOME\}/$HOME}"
     f="${f//\$ZDOTDIR/${ZDOTDIR:-$HOME}}"; f="${f//\$\{ZDOTDIR\}/${ZDOTDIR:-$HOME}}"
     [ -n "$f" ] && [ -f "$f" ] && printf '%s\n' "$f"

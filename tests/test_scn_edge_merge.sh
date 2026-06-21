@@ -53,7 +53,9 @@ assert_file "second install placed settings.json" "$S2"
 jq '.hooks.PreToolUse += [{"matcher":"Edit","hooks":[{"type":"command","command":["my-tool","--run"]}]}]' \
   "$S2" > "$S2.t" && mv "$S2.t" "$S2"
 
-WG="$P2/hooks/leak-guard.sh"
+# The installer shell-quotes the config-dir portion of the command (space-safe),
+# so the registered string is '<dir>'/hooks/leak-guard.sh — match that exact form.
+WG="'$P2'/hooks/leak-guard.sh"
 assert_lit "leak-guard hook registered before deselect" "$WG" "$S2"
 
 # Deselect everything (uninstall the kit additions in place).

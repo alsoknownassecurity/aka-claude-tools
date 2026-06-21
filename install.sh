@@ -99,7 +99,12 @@ merge_settings() {
   [ -z "$existing" ] && existing='{}'
   [ -z "$additions" ] && additions='{}'
   jq -n --argjson e "$existing" --argjson a "$additions" '
-    ($e * $a)
+    # Strip maintainer-only "$comment" keys from the KIT additions RECURSIVELY
+    # (not just top-level) before merging, so a note nested inside a payload can
+    # never leak into the user'"'"'s settings.json. Applied to $a only — the user'"'"'s
+    # own settings ($e) are never walked, so a key they legitimately keep stays.
+    ($a | walk(if type=="object" then del(.["$comment"]) else . end)) as $a
+    | ($e * $a)
     | ( (($e.permissions // {}) * ($a.permissions // {})) as $pbase
         | reduce ("allow","deny","ask") as $k ($pbase;
             ( ((($e.permissions[$k]) // []) + (($a.permissions[$k]) // [])) | unique ) as $m
@@ -502,6 +507,13 @@ apply_additions() {
 
   # 4b. assemble additions object
   local add='{}'
+  # Claude Code runs a hook's `command` through a shell, so a config dir containing
+  # spaces or shell metachars would word-split / mis-parse the registered path.
+  # Single-quote the DIRECTORY portion (cqd) and leave the `/hooks/<file>` suffix
+  # outside the quotes — so the path is shell-safe AND its basename still matches
+  # the prune/registration checks (… endswith "/x.sh"). config_dir is already
+  # absolute + $HOME-expanded here, so single-quoting it is literal and correct.
+  local cqd="'$config_dir'"
   is_selected secure-settings "$_sel_ids" && add="$(jq -s '.[0] * .[1]' <(printf '%s' "$add") "$CONFIG_SRC/settings.base.json")"
 
   # Shared library the egress guards read (single source of truth for the
@@ -515,7 +527,7 @@ apply_additions() {
     place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
     # Registered twice: web tools (always scanned) and Bash (fast-gated — only
     # commands containing an outbound tool are scanned; ~98% of calls pay ~0 ms).
-    add="$(jq --arg cmd "$config_dir/hooks/leak-guard.sh" \
+    add="$(jq --arg cmd "$cqd/hooks/leak-guard.sh" \
       '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch",hooks:[{type:"command",command:$cmd}]},
                              {matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Optional: stronger secret detection. Degrades to regex tiers without it.
@@ -523,7 +535,7 @@ apply_additions() {
   fi
   if is_selected harness-pointer "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/harness-pointer.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$config_dir/hooks/harness-pointer.sh" \
+    add="$(jq --arg cmd "$cqd/hooks/harness-pointer.sh" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
   fi
   if is_selected command-guard "$_sel_ids"; then
@@ -539,8 +551,9 @@ apply_additions() {
       place_file "$CONFIG_SRC/hooks/command-guard.ts" "$config_dir/hooks" +x
       # Register with bun's ABSOLUTE path. Claude Code runs hooks in a shell that
       # may not have bun on PATH (non-interactive subshells); a bare shebang would
-      # silently fail to launch and the guard would be a no-op.
-      add="$(jq --arg cmd "$bun_bin $config_dir/hooks/command-guard.ts" \
+      # silently fail to launch and the guard would be a no-op. Both tokens are
+      # shell-quoted (bun path + the script's dir) so spaces/metachars don't split.
+      add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/command-guard.ts" \
         '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
       ok "command-guard enabled (bun: $bun_bin)"
     else
@@ -554,7 +567,7 @@ apply_additions() {
     ensure_dep rtk "rtk (RTK rewriting)" 0 || true
     # rtk-safe self-skips at runtime if rtk/jq are absent, so it's safe to register unconditionally.
     place_file "$CONFIG_SRC/hooks/rtk-safe.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$config_dir/hooks/rtk-safe.sh" \
+    add="$(jq --arg cmd "$cqd/hooks/rtk-safe.sh" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Read-only rtk allowlist: the rewrite changes the command string, so the
     # user's existing allow rules (e.g. Bash(git status:*)) no longer match the
@@ -567,7 +580,7 @@ apply_additions() {
   fi
   if is_selected statusline "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/statusline.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$config_dir/hooks/statusline.sh" \
+    add="$(jq --arg cmd "$cqd/hooks/statusline.sh" \
       '.statusLine = {type:"command",command:$cmd,refreshInterval:2}' <<<"$add")"
     # Optional location pin for accurate weather (default: auto-detect by IP).
     isay ""
