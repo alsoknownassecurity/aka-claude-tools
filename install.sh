@@ -106,7 +106,7 @@ trap 'rc=$?; ct_rebuild_rollback; exit $rc' EXIT
 # detected package manager; abort if we can't get it.
 ensure_dep jq "jq (required)" 1
 command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
-# bun (command-guard) and trufflehog (web-egress) are checked/offered when those
+# bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
 # additions are selected — see the build step below.
 
 say ""
@@ -755,7 +755,7 @@ setup_one_config() {
       '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch",hooks:[{type:"command",command:$cmd}]},
                              {matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Optional: stronger secret detection. Degrades to regex tiers without it.
-    ensure_dep trufflehog "trufflehog (web-egress secret detection)" 0 || true
+    ensure_dep trufflehog "trufflehog (leak-guard secret detection)" 0 || true
   fi
   if is_selected harness-pointer "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/harness-pointer.sh" "$config_dir/hooks" +x
