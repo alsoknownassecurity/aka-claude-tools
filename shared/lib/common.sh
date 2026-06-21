@@ -2,7 +2,12 @@
 # common.sh — shared helpers for the aka-claude-tools installer. Sourced, not run.
 
 # ── output ───────────────────────────────────────────────────────────────────
-if [ -t 1 ]; then
+# Color only on a real terminal AND when NO_COLOR is unset (https://no-color.org).
+# Honoring NO_COLOR lets automation/tests (and agents driving the menu with expect)
+# get clean, ANSI-free prompts — the colored "[Y/n]" hint otherwise sits between
+# escape codes and defeats naive matchers, which can misalign answers and silently
+# toggle an addition. Humans on a TTY are unaffected.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_GRN=$'\033[32m'; C_YLW=$'\033[33m'
   C_BLU=$'\033[34m'; C_RED=$'\033[31m'; C_RST=$'\033[0m'
 else

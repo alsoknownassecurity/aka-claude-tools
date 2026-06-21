@@ -66,7 +66,7 @@ log_user 1
 # split the literal label across a newline and defeat the -ex substring match.
 set stty_init "rows 80 cols 1000"
 # spawn the installer under a PTY; --no-auth-inherit, NO --defaults.
-spawn env HOME=$SB SHELL=/bin/bash bash $REPO_ROOT/install.sh --no-auth-inherit
+spawn env HOME=$SB SHELL=/bin/bash NO_COLOR=1 bash $REPO_ROOT/install.sh --no-auth-inherit
 
 # Track which profile pass we're in so the folder/alias answers differ.
 set pass 1

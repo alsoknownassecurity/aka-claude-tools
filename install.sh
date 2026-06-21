@@ -490,12 +490,18 @@ setup_one_config() {
     # migrates them intelligently. The script still preserves everything if they stay.
     local _cx; _cx="$(detect_config_complexity "$config_dir")"
     if [ -n "$_cx" ]; then
+      # A complex config is exactly where a deterministic rebuild is riskiest, so we
+      # DON'T default to it: flip the rebuild prompt to N (decline → layer in place,
+      # below) and steer toward Path A. An explicit --clean still opts into rebuild.
+      [ "$CT_CLEAN" != "1" ] && _rebuild_def="N"
       say ""
       warn "This looks like a complex config:"
       printf '%s\n' "$_cx" | while IFS= read -r _r; do [ -n "$_r" ] && say "    ${C_DIM}• ${_r}${C_RST}"; done
       say  "  ${C_DIM}The Claude-driven install handles these more faithfully than a script — it reads your"
-      say  "  whole config and reasons about MCP servers, @-imports & hook interdependencies. Consider"
-      say  "  Path A: in an authenticated Claude Code session, ask it to read ${C_RST}agent-install.md${C_DIM}.${C_RST}"
+      say  "  whole config and reasons about MCP servers, @-imports & hook interdependencies. The"
+      say  "  recommended path here is ${C_RST}Path A${C_DIM}: in an authenticated Claude Code session, ask it to"
+      say  "  read ${C_RST}agent-install.md${C_DIM}. Declining the rebuild below just layers the additions on in"
+      say  "  place (safe, nothing moved) — you won't be dropped out of this installer.${C_RST}"
     fi
     if confirm "Back up ${_disp} and rebuild it clean?" "$_rebuild_def"; then
       # Resolve a symlinked config dir to its REAL target so the rebuild backs up and
@@ -585,7 +591,14 @@ setup_one_config() {
         ok "Restored runtime state: ${_nmem} memory dir(s), ${_nconv} conversation(s)"
       fi
     else
-      say "  ${C_DIM}No backup — layering additions onto ${_disp} in place instead.${C_RST}"
+      # Declining the rebuild is NOT an exit: we continue right here and layer the
+      # additions onto the existing dir. Nothing is moved or removed, so it's lossless
+      # — the kit's files/registrations are merged in alongside everything you have.
+      ok  "Layering additions onto ${_disp} in place — nothing moved, your config stays as-is."
+      if [ -n "$_cx" ]; then
+        say "  ${C_DIM}(For a clean rebuild that reasons about your MCP servers / @-imports, quit now and"
+        say "  use Path A instead — ask Claude Code to read ${C_RST}agent-install.md${C_DIM}.)${C_RST}"
+      fi
     fi
   fi
 
