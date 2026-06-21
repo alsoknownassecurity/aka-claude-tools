@@ -630,6 +630,22 @@ setup_one_config() {
     if [ -n "$migrate_src" ]; then
       mkdir -p "$config_dir"
       ok "Migrating from ${migrate_src/#$HOME/~}"
+      # Advisory: if the SOURCE config is complex, a deterministic copy can't reason
+      # about what it carries over (MCP auth/transport, CLAUDE.md @-imports whose
+      # paths may need rewriting for the new profile, hook interdependencies). Point
+      # the user at Path A, which reads the source and migrates it intelligently. Not
+      # shown for the rebuild backup — that's the profile's own data coming home, not
+      # a cross-config import. Advisory only; the migration below still proceeds.
+      if [ "$migrate_src" != "$rebuild_backup" ]; then
+        local _scx; _scx="$(detect_config_complexity "$migrate_src")"
+        if [ -n "$_scx" ]; then
+          warn "The config you're importing from looks complex:"
+          printf '%s\n' "$_scx" | while IFS= read -r _r; do [ -n "$_r" ] && say "    ${C_DIM}• ${_r}${C_RST}"; done
+          say  "  ${C_DIM}A script copies these as-is; it can't rewrite @-import paths for the new profile or"
+          say  "  reason about MCP auth. For a faithful import, consider ${C_RST}Path A${C_DIM} — ask an authenticated"
+          say  "  Claude Code session to read ${C_RST}agent-install.md${C_DIM}. Or continue here to copy them verbatim.${C_RST}"
+        fi
+      fi
       # In the rebuild path the source IS this profile's own backup, and the explicit
       # restores + preserve_from_backup sweep above already brought back EVERYTHING
       # (settings.json, CLAUDE.md, session history, agents/skills/commands/hooks and
