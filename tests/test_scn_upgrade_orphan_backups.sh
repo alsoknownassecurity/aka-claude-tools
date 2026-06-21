@@ -91,10 +91,13 @@ assert_ok   "B: live rule restored into rebuilt profile" \
 assert_nlit "B: stale backup content NOT merged on rebuild" "$STALE_MARKER" "$PB/settings.json"
 assert_ok   "B: no leftover \"stale\" key after rebuild" \
   bash -c "jq -e 'has(\"stale\") | not' '$PB/settings.json' >/dev/null"
-# The orphan cruft must NOT be restored into the rebuilt profile — only the
-# canonical settings.json comes back. The cruft stays in the backup.
-assert_eq   "B: orphan backup cruft NOT restored into rebuilt profile" "0" "$(count_cruft "$PB")"
-# The cruft is preserved in the backup (the user can recover it).
+# The orphan settings.json.* siblings are the USER'S files — a rebuild migrates
+# everything (we never silently drop a user file), so they ARE restored. The
+# guarantee that matters is above: none of their STALE content was MERGED into the
+# canonical settings.json. (They're inert siblings; the kit only reads settings.json.)
+assert_eq   "B: orphan siblings preserved into rebuilt profile (not dropped)" \
+  "$n_cruft_before" "$(count_cruft "$PB")"
+# ...and they also remain in the backup (cp, not mv).
 assert_file "B: cruft preserved in backup (pre-phase6)" "$bak/settings.json.pre-phase6"
 assert_file "B: cruft preserved in backup (.bak)"       "$bak/settings.json.bak.20240101-000000"
 assert_nlit "B: no jq parse error reported on cruft" "parse error" "$SBB/log"

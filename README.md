@@ -101,16 +101,25 @@ CT_ADDITIONS="secure-settings leak-guard wrap-up" ./install.sh --defaults
 
 > **Rebuild your default `~/.claude`:** enter `~/.claude` as the target folder and
 > the installer offers to move it to a timestamped backup (`~/.claude.backup-…`),
-> recreate it clean with the additions, and migrate your picks back from the
-> backup. No alias is written — plain `claude` already launches it — and your
-> login survives: `~/.claude.json` lives at `$HOME`, macOS Keychain auth is keyed
-> to the unchanged dir path, and a file-based `.credentials.json` is copied back.
-> A Claude Code session that's already running keeps working (it's loaded in
+> recreate it clean with the additions, and **restore everything you set up** from
+> the backup automatically — settings, CLAUDE.md, conversations/memory/history,
+> your agents/skills/commands/hooks, auth, and any other content (custom dirs,
+> plugins, MCP config). It's your profile returning to itself, so only stale **kit**
+> files are replaced fresh. No alias is written — plain `claude` already launches it
+> — and your login survives: `~/.claude.json` lives at `$HOME`, macOS Keychain auth
+> is keyed to the unchanged dir path, and a file-based `.credentials.json` is copied
+> back. A Claude Code session that's already running keeps working (it's loaded in
 > memory), though it may show hook errors while files are changed underneath it —
 > that's normal and doesn't affect the install. The next time you launch `claude`,
-> the newly-configured setup loads. Sessions/history stay in the backup; delete it
+> the newly-configured setup loads; the backup is kept as a safety net, delete it
 > once you're happy. (Decline the backup and the installer layers the additions
 > onto `~/.claude` in place instead.)
+>
+> **Complex config?** The script preserves files byte-for-byte but can't *reason*
+> about config that needs interpretation — MCP servers, `CLAUDE.md` `@`-imports that
+> may need path rewriting, hook interdependencies. When it detects those it points
+> you at **Path A** (the Claude-driven install above), which reads your whole config
+> and migrates them intelligently. Prefer Path A for a rich existing profile.
 >
 > **Rebuilding any other existing profile works the same way** — target any config
 > dir that already exists (e.g. `~/.claude-work`) and you get the same offer: back

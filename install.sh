@@ -474,14 +474,29 @@ setup_one_config() {
     say  "  ${C_DIM}Back up + rebuild: ${_disp} is moved to a timestamped backup and recreated clean"
     say  "  with the current kit files. Already running aka-claude-tools here? This IS the upgrade"
     say  "  path — it refreshes the additions to this version with no cruft.${C_RST}"
-    say  "  ${C_DIM}Not a fresh install: your conversations, memory/, prompt history, todos, CLAUDE.md"
-    say  "  and settings.json are restored automatically from the backup. Only user-added agents/"
-    say  "  skills/commands/hooks are an explicit pick below.${C_RST}"
+    say  "  ${C_DIM}Not a fresh install: EVERYTHING you set up is restored automatically from the"
+    say  "  backup — conversations, memory/, history, todos, CLAUDE.md, settings.json, your agents/"
+    say  "  skills/commands/hooks, auth, and any other content (custom dirs, plugins, MCP config)."
+    say  "  It's your profile returning to itself — only stale KIT files are replaced fresh.${C_RST}"
     say  "  ${C_DIM}Your login survives: account metadata + a file-based .credentials.json are restored"
     say  "  from the backup, and Keychain auth is keyed to the unchanged dir path.${C_RST}"
     say  "  ${C_DIM}A running Claude Code session keeps working — it's already loaded in memory —"
     say  "  but it may show hook errors while files are being changed underneath it. That's"
     say  "  normal and won't impact the install. The next launch loads the new setup.${C_RST}"
+    # Advisory: a deterministic copy preserves files byte-for-byte but can't REASON
+    # about config that needs interpretation (MCP auth/transport, CLAUDE.md @-imports
+    # that may need path rewriting, bespoke layouts). When those are present, point
+    # the user at the Claude-driven install (Path A) — it reads the whole config and
+    # migrates them intelligently. The script still preserves everything if they stay.
+    local _cx; _cx="$(detect_config_complexity "$config_dir")"
+    if [ -n "$_cx" ]; then
+      say ""
+      warn "This looks like a complex config:"
+      printf '%s\n' "$_cx" | while IFS= read -r _r; do [ -n "$_r" ] && say "    ${C_DIM}• ${_r}${C_RST}"; done
+      say  "  ${C_DIM}The Claude-driven install handles these more faithfully than a script — it reads your"
+      say  "  whole config and reasons about MCP servers, @-imports & hook interdependencies. Consider"
+      say  "  Path A: in an authenticated Claude Code session, ask it to read ${C_RST}agent-install.md${C_DIM}.${C_RST}"
+    fi
     if confirm "Back up ${_disp} and rebuild it clean?" "$_rebuild_def"; then
       # Resolve a symlinked config dir to its REAL target so the rebuild backs up and
       # recreates the real store, leaving the user's symlink (config-on-a-synced-
@@ -539,9 +554,8 @@ setup_one_config() {
       #     starting from empty. Same dir → hook paths are unchanged, no rewrite.
       #   • CLAUDE.md      — user-authored global memory/imports, not kit content.
       #   • session state  — conversations, memory/, prompt history, todos, tasks
-      #     (migrate_sessions / CT_SESSION_ITEMS). Secret-bearing caches
-      #     (shell-snapshots, paste-cache, file-history, session-env) stay in the
-      #     backup by design; .credentials.json was already restored above.
+      #     (migrate_sessions / CT_SESSION_ITEMS). Everything else the user set up is
+      #     swept back below; .credentials.json was already restored above.
       if [ -f "$rebuild_backup/settings.json" ]; then
         cp "$rebuild_backup/settings.json" "$config_dir/settings.json"
         ok "Restored settings.json (reconciled with this version's kit settings below)"
@@ -551,24 +565,16 @@ setup_one_config() {
         ok "Restored CLAUDE.md ($(wc -l < "$config_dir/CLAUDE.md" | tr -d ' ') lines)"
       fi
       migrate_sessions "$rebuild_backup" "$config_dir"
-      # Restore the user's OWN (unmarked) hook FILES so the registrations carried in
-      # the restored settings.json don't dangle. Kit hooks (managed-marker, or a name
-      # the kit still ships) are re-placed fresh by the build below, so copy back only
-      # UNMARKED files the kit doesn't ship — the same marker convention the self-clean
-      # uses (marked = kit, unmarked = user). Without this, a --clean rebuild keeps a
-      # user hook's registration but drops its file → a hook pointing at nothing.
-      if [ -d "$rebuild_backup/hooks" ]; then
-        local _uh _ub _urest=0
-        for _uh in "$rebuild_backup"/hooks/*; do
-          [ -f "$_uh" ] || continue
-          grep -q 'aka-claude-tools:managed-hook' "$_uh" 2>/dev/null && continue   # kit hook → re-placed fresh
-          _ub="$(basename "$_uh")"
-          [ -e "$CONFIG_SRC/hooks/$_ub" ] && continue                              # a name the kit ships → fresh copy wins
-          mkdir -p "$config_dir/hooks"
-          cp "$_uh" "$config_dir/hooks/$_ub"; _urest=$((_urest+1))
-        done
-        [ "$_urest" -gt 0 ] && ok "Restored $_urest user-owned hook file(s) from the backup"
-      fi
+      # "Lose nothing" sweep: after the known-item restores above, bring back EVERY
+      # other file the user had set up — bespoke top-level dirs (a framework, MCP
+      # config, plugins), nested hook subdirs, extra JSON, caches — that the kit's
+      # hardcoded allowlist would otherwise strand in the backup. A rebuild restores a
+      # profile's OWN data to itself (no secret-spreading), so we migrate everything
+      # and leave behind only stale KIT files: preserve_from_backup skips anything
+      # already restored, kit-managed hooks (re-placed fresh), and any path the kit
+      # ships. This generalizes the old "restore unmarked user hooks" step to the tree
+      # so a clean rebuild can never silently drop a user's content.
+      preserve_from_backup "$rebuild_backup" "$config_dir" "$CONFIG_SRC"
       # Transparency: report exactly what runtime state came back. An upgrade
       # should be auditable — the kit's "never change things silently" principle
       # applies to restores too. Counts are best-effort and portable (BSD/GNU).
@@ -597,8 +603,11 @@ setup_one_config() {
   # 3. migrate from an existing config — scan each category, pick what to bring
   # over. Default source = the LIVE CC config dir derived above (or the backup
   # when rebuilding); the engineer can type any other folder, or decline.
+  # A rebuild already auto-restored EVERYTHING from its own backup (the explicit
+  # restores + preserve_from_backup sweep above), so this prompt is now only for
+  # pulling in a DIFFERENT config — default N. (It defaulted Y pre-sweep, when the
+  # backup's own agents/skills/commands had to be re-imported here by hand.)
   local mig_def="N" migrate_src=""
-  [ -n "$rebuild_backup" ] && mig_def="Y"
   isay ""
   if confirm "Migrate items from an existing Claude config into this profile?" "$mig_def"; then
     prompt migrate_src "  Migrate FROM which config folder?" "$default_src"
@@ -608,12 +617,12 @@ setup_one_config() {
     if [ -n "$migrate_src" ]; then
       mkdir -p "$config_dir"
       ok "Migrating from ${migrate_src/#$HOME/~}"
-      # In the rebuild path the source IS this profile's own backup, and its
-      # settings.json, CLAUDE.md, and session history were already restored
-      # automatically above. Skip those prompts and offer only the items the
-      # auto-restore deliberately leaves to a choice (agents, skills, commands,
-      # output-styles, user hooks).
-      [ "$migrate_src" = "$rebuild_backup" ] && isay "  ${C_DIM}settings.json, CLAUDE.md & session history already restored from the backup — pick any extra agents/skills/commands/hooks to bring back.${C_RST}"
+      # In the rebuild path the source IS this profile's own backup, and the explicit
+      # restores + preserve_from_backup sweep above already brought back EVERYTHING
+      # (settings.json, CLAUDE.md, session history, agents/skills/commands/hooks and
+      # any other content). So there is nothing left to pick — skip the per-category
+      # prompts entirely for the backup source; they apply only to a DIFFERENT config.
+      [ "$migrate_src" = "$rebuild_backup" ] && isay "  ${C_DIM}This is the rebuild backup — your settings, CLAUDE.md, history and all other content were already restored automatically. Nothing to pick.${C_RST}"
       if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/settings.json" ] && confirm "  • merge your existing settings.json (hook paths auto-rewritten)?" "Y"; then
         rewrite_hook_paths "$config_dir" < "$migrate_src/settings.json" > "$config_dir/settings.json.mig"
         # Dangerous-mode settings are the user's call, not ours: if their config
@@ -639,12 +648,17 @@ setup_one_config() {
       if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/CLAUDE.md" ] && confirm "  • copy your CLAUDE.md?" "N"; then
         cp "$migrate_src/CLAUDE.md" "$config_dir/CLAUDE.md"; ok "Copied CLAUDE.md"
       fi
-      migrate_category "$migrate_src" "$config_dir" agents        file
-      migrate_category "$migrate_src" "$config_dir" skills        dir
-      migrate_category "$migrate_src" "$config_dir" commands      file
-      migrate_category "$migrate_src" "$config_dir" output-styles file
-      migrate_category "$migrate_src" "$config_dir" hooks         file
-      migrate_category "$migrate_src" "$config_dir" workflows     file
+      # Per-category picks apply ONLY to a different source config; the rebuild backup
+      # was already swept back wholesale above (preserve_from_backup), so re-offering
+      # its categories here would be redundant.
+      if [ "$migrate_src" != "$rebuild_backup" ]; then
+        migrate_category "$migrate_src" "$config_dir" agents        file
+        migrate_category "$migrate_src" "$config_dir" skills        dir
+        migrate_category "$migrate_src" "$config_dir" commands      file
+        migrate_category "$migrate_src" "$config_dir" output-styles file
+        migrate_category "$migrate_src" "$config_dir" hooks         file
+        migrate_category "$migrate_src" "$config_dir" workflows     file
+      fi
       # Optional: bring over session/history state (past conversations, input
       # history, todos) from ANOTHER config. OFF by default — it's personal and
       # can be large, and secrets / shell-env / paste caches are never included
