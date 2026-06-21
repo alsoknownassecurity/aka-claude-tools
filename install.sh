@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # aka-claude-tools installer
 # ──────────────────────
-# Creates one or more ISOLATED Claude Code config folders, optionally seeded from
-# an existing config (defaults to your LIVE config dir — $CLAUDE_CONFIG_DIR, else
-# ~/.claude — but you can pick any folder or a backup), layers on the aka-claude-tools
-# additions you select, and wires a shell alias so you can launch each by name.
+# Creates an ISOLATED Claude Code config folder, layers on the aka-claude-tools
+# additions you select, and wires a shell alias so you can launch it by name.
 #
 # Mechanism: Claude Code reads its config dir from $CLAUDE_CONFIG_DIR. Each folder
 # is fully independent (own settings, hooks, agents, sessions). The alias just
@@ -12,48 +10,47 @@
 #
 #     alias aka='CLAUDE_CONFIG_DIR="$HOME/.claude-aka" claude'
 #
-# Re-run any time to add another config folder. Idempotent: re-running for the
-# same folder/alias updates in place instead of duplicating. Idempotent BOTH
-# ways: unchecking an addition you previously installed UNINSTALLS it — its
-# hook/command/skill files and its settings contributions (hook registrations,
-# statusLine, and the permission/env rules it shipped) are removed. Your own
-# rules, hooks, and files are never touched.
+# Re-run any time. Idempotent: re-running for the same folder LAYERS in place —
+# it never duplicates, and unchecking an addition you previously installed
+# UNINSTALLS it (its hook/command/skill files and its settings contributions —
+# hook registrations, statusLine, the permission/env rules it shipped — are
+# removed). Your own rules, hooks, and files are never touched.
 #
-# The target can also be the DEFAULT ~/.claude: the installer offers to move it
-# to a timestamped backup, rebuild it clean with the selected additions, and
-# migrate your picks back from the backup. No alias is written for the default
-# dir (plain `claude` uses it) and your login survives — ~/.claude.json lives at
-# $HOME, Keychain auth is keyed to the unchanged dir path, and a file-based
-# .credentials.json is copied back from the backup.
-#
-# UPGRADES PRESERVE YOUR STATE. An upgrade is never a fresh install: a clean
-# rebuild automatically restores the profile's OWN runtime state from the backup
-# — conversations, memory/, prompt history, todos, tasks, plus CLAUDE.md and your
-# settings.json — then re-applies the current kit files on top. Only secret-bearing
-# caches (credentials are restored separately; shell-snapshots / paste-cache /
-# file-history / session-env are left in the backup) sit outside that restore.
-# The blast radius of an upgrade is the kit-managed surface, not your data.
+# SCOPE — this script owns the DETERMINISTIC, REPEATABLE mechanics and the
+# privileged shell-rc write (the alias), nothing more:
+#   • addition layering (place files + merge settings) — see apply_additions /
+#     the --apply engine mode, which an agent or a CI script can invoke directly;
+#   • alias creation/checking — see setup_alias / the --alias mode. install.sh is
+#     the SOLE sanctioned writer of your shell rc, so the Claude-driven install
+#     invokes it for the alias instead of editing the rc itself, which keeps
+#     startup-write-guard / command-guard strict.
+# Migrating a rich EXISTING config (reading it, deciding what to carry over,
+# rewriting @-import / MCP paths) and backing-up-and-rebuilding a profile are
+# JUDGMENT calls, owned by the Claude-driven install (Path A, agent-install.md) —
+# it reads the whole config and reasons about it, then calls this script for the
+# mechanics above. Targeting an existing dir here simply layers on top.
 #
 # Flags:
 #   --defaults         non-interactive; accept every default (config ~/.claude-aka,
 #                      alias `aka`, recommended additions, no copy of existing config).
 #   --no-auth-inherit  do NOT seed the new profile's .claude.json from your existing
 #                      login (use when the profile is for a DIFFERENT account).
-#   --clean            force the back-up + clean-rebuild path (default for an existing
-#                      non-default profile is layer-in-place). State is restored either
-#                      way; --clean additionally refreshes kit-managed FILES (hooks,
-#                      commands, skills) to the current version rather than leaving the
-#                      old ones in place. Settings permissions are reconciled (adopt
-#                      new / retire dropped) in both paths.
 #   --apply            DETERMINISTIC ENGINE mode: layer the additions named in
 #                      $CT_ADDITIONS onto $CT_CONFIG_DIR and exit. No prompts, no
-#                      migration, no alias, no auth — just the repeatable mechanics
-#                      (place files, union settings onto whatever is already in the
-#                      dir, reconcile retired perms, register hooks). This is the
-#                      entry point Path A (agent-install.md) invokes after it has
-#                      done the judgment work (scan + migrate the user's config);
-#                      also usable directly for a scripted/CI fresh install.
-#                      Requires CT_CONFIG_DIR and CT_ADDITIONS; implies non-interactive.
+#                      alias, no auth — just the repeatable mechanics (place files,
+#                      union settings onto whatever is already in the dir, reconcile
+#                      retired perms, register hooks). This is the entry point Path A
+#                      (agent-install.md) invokes after it has done the judgment work
+#                      (scan + migrate the user's config); also usable directly for a
+#                      scripted/CI fresh install. Requires CT_CONFIG_DIR + CT_ADDITIONS.
+#   --alias            Create/check the launcher alias for $CT_ALIAS → $CT_CONFIG_DIR
+#                      and exit. install.sh is the SOLE sanctioned writer of your
+#                      shell rc, so the agent invokes THIS rather than editing the rc
+#                      itself — which keeps startup-write-guard / command-guard strict.
+#                      Reviews the rc + its full source chain; writes an idempotent
+#                      managed block, or exits non-zero on an unresolved name
+#                      collision (the caller picks another name). Requires CT_CONFIG_DIR
+#                      + CT_ALIAS; implies non-interactive.
 
 set -euo pipefail
 
@@ -66,51 +63,16 @@ RETIRED_PERMS="$(cat "$CONFIG_SRC/managed-permissions.json" 2>/dev/null || print
 source "$REPO_DIR/shared/lib/common.sh"
 
 SEED_AUTH=1
-CT_CLEAN=0
 CT_APPLY=0
+CT_ALIAS_MODE=0
 for arg in "$@"; do
   case "$arg" in
     --defaults)        export CT_NONINTERACTIVE=1 ;;
     --no-auth-inherit) SEED_AUTH=0 ;;
-    --clean)           CT_CLEAN=1 ;;
     --apply)           CT_APPLY=1; export CT_NONINTERACTIVE=1 ;;
+    --alias)           CT_ALIAS_MODE=1; export CT_NONINTERACTIVE=1 ;;
   esac
 done
-
-# ── rebuild safety net ───────────────────────────────────────────────────────
-# The default-dir rebuild moves ~/.claude to a timestamped backup before
-# recreating it. Between that mv and the finished rebuild, an interrupt (Ctrl-C)
-# or a mid-flow failure under `set -e` would otherwise leave ~/.claude as a
-# broken half-built dir while the real config sits silently in the backup —
-# plain `claude` would then launch a config with no settings/memory. This trap
-# restores the backup if the rebuild didn't complete, making the operation
-# all-or-nothing. Harmless on every non-rebuild path (the guard vars stay empty).
-_CT_REBUILD_BACKUP=""
-_CT_REBUILD_TARGET=""
-_CT_REBUILD_DONE=0
-_CT_ROLLBACK_RAN=0
-ct_rebuild_rollback() {
-  [ "$_CT_ROLLBACK_RAN" = "1" ] && return 0
-  _CT_ROLLBACK_RAN=1
-  [ -n "$_CT_REBUILD_BACKUP" ] || return 0      # no rebuild was in progress
-  [ "$_CT_REBUILD_DONE" = "1" ] && return 0     # rebuild finished cleanly
-  [ -d "$_CT_REBUILD_BACKUP" ] || return 0      # backup gone / mv never happened
-  warn ""
-  warn "Interrupted before the rebuild finished — restoring ${_CT_REBUILD_TARGET/#$HOME/~}."
-  [ -d "$_CT_REBUILD_TARGET" ] && rm -rf "$_CT_REBUILD_TARGET" 2>/dev/null
-  if mv "$_CT_REBUILD_BACKUP" "$_CT_REBUILD_TARGET" 2>/dev/null; then
-    ok "Restored ${_CT_REBUILD_TARGET/#$HOME/~} from the backup — nothing was left behind."
-  else
-    warn "Could not auto-restore. Your original config is intact at: $_CT_REBUILD_BACKUP"
-    warn "Recover manually: rm -rf \"$_CT_REBUILD_TARGET\" && mv \"$_CT_REBUILD_BACKUP\" \"$_CT_REBUILD_TARGET\""
-  fi
-}
-trap 'ct_rebuild_rollback; exit 130' INT
-trap 'ct_rebuild_rollback; exit 143' TERM
-trap 'ct_rebuild_rollback; exit 129' HUP
-# Preserve the real exit status — a bare EXIT trap would otherwise overwrite $?
-# with the trap body's status and mask a clean (0) or failing exit.
-trap 'rc=$?; ct_rebuild_rollback; exit $rc' EXIT
 
 # ── preflight ────────────────────────────────────────────────────────────────
 # jq drives the whole settings merge — required. Offer to install it via the
@@ -118,7 +80,7 @@ trap 'rc=$?; ct_rebuild_rollback; exit $rc' EXIT
 ensure_dep jq "jq (required)" 1
 # The claude-CLI check and the banner are installer chrome — skip them in --apply
 # (engine) mode, which is invoked programmatically and only needs jq.
-if [ "$CT_APPLY" != "1" ]; then
+if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ]; then
   command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
   # bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
   # additions are selected — see the build step below.
@@ -385,240 +347,86 @@ seed_auth() {
   fi
 }
 
-# ── migrate from existing config ─────────────────────────────────────────────
-# Rewrite hook/statusLine command paths in a settings.json from the OLD config
-# dir to the new one, so migrated registrations resolve under CLAUDE_CONFIG_DIR.
-# stdin: settings json → stdout: rewritten json.
-rewrite_hook_paths() {
-  local new_hooks="$1/hooks" abs="$HOME/.claude/hooks"
-  # Repoint hook/statusLine commands that live under ANY sibling claude-config
-  # hooks dir ($HOME/.claudeXXX/hooks — covers migrating from a non-default
-  # profile like .claude-clean) at THIS profile's hooks dir, so migrated
-  # registrations resolve inside the new config instead of dangling at the source.
-  jq --arg abs "$abs" --arg new "$new_hooks" '
-    def fix:
-      if type=="string" then
-        if test("^\\$HOME/\\.claude[^/]*/hooks") then sub("^\\$HOME/\\.claude[^/]*/hooks"; $new)
-        elif startswith($abs) then $new + ltrimstr($abs)
-        else . end
-      else . end;
-    walk(if type=="object" and has("command") then .command |= fix else . end)
-  '
-}
-
-# Scan one category of the source config, list items, let the user pick, copy
-# the selected ones into the new profile.
-#   migrate_category <src_root> <config_dir> <category> <file|dir>
-migrate_category() {
-  local src="$1/$3" dst="$2/$3" cat="$3" kind="$4" items=() it
-  [ -d "$src" ] || return 0
-  if [ "$kind" = "dir" ]; then
-    for it in "$src"/*/; do [ -d "$it" ] && items+=("$(basename "$it")"); done
-  else
-    for it in "$src"/*; do [ -f "$it" ] && items+=("$(basename "$it")"); done
-  fi
-  [ ${#items[@]} -eq 0 ] && return 0
-
-  say ""
-  say "  ${C_BOLD}${cat}${C_RST} ${C_DIM}(${#items[@]} in ${1/#$HOME/~})${C_RST}"
-  local i=1
-  for it in "${items[@]}"; do say "    ${C_DIM}${i})${C_RST} ${it%.md}"; i=$((i+1)); done
-  local sel; prompt sel "    migrate which? (e.g. 1 3, 1-3, 'all', Enter=none):" ""
-  local idxs; idxs="$(parse_selection "$sel" "${#items[@]}")"
-  [ -z "$idxs" ] && { say "    ${C_DIM}skipped${C_RST}"; return 0; }
-
-  mkdir -p "$dst"
-  local n=0 idx
-  for idx in $idxs; do
-    it="${items[$((idx-1))]}"
-    # -L dereferences symlinks so migrated items are SELF-CONTAINED real files in
-    # the new profile. Without it a symlinked source hook (common when hooks are
-    # symlinked from a shared dir) lands as a link pointing outside the profile —
-    # and a later addition cp would then write THROUGH it, clobbering the link's
-    # target. See place_file.
-    if cp -RL "$src/$it" "$dst/"; then
-      [ "$cat" = "hooks" ] && chmod +x "$dst/$it" 2>/dev/null || true
-      n=$((n+1))
+# ── alias management (the SOLE sanctioned shell-rc writer) ────────────────────
+# setup_alias <config_dir> <alias_name> [policy: interactive|strict]
+# Reviews the rc + every file it sources (alias_target_elsewhere, cycle-safe) and
+# writes/updates an IDEMPOTENT managed block: re-running for the same dir+alias
+# REPLACES the block (write_managed_block strips any prior same-id block first),
+# so repeated installs/upgrades never accumulate duplicate entries. Keeping this
+# in install.sh means the agent invokes it instead of hand-writing the rc, so
+# startup-write-guard / command-guard stay strict. On a name collision (the alias is
+# already used for a DIFFERENT target):
+#   • interactive → offer an alternate name (default <alias>2), or skip;
+#   • strict      → report and return 1 so the caller (the agent) picks another.
+setup_alias() {
+  local config_dir="$1" alias_name="$2" policy="${3:-interactive}"
+  local rc; rc="$(detect_shell_rc)"
+  local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
+  if [ "$prior" = "$config_dir" ]; then
+    # Already resolves to THIS profile from elsewhere (e.g. a fleet aliases file) →
+    # ensure a SINGLE definition: drop any stale managed block of ours, else it's a dup.
+    if remove_managed_block "$rc" "$alias_name"; then
+      ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — removed our now-redundant block."
+    else
+      ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile — not adding a duplicate."
     fi
-  done
-  ok "Migrated $n ${cat} → ${dst/#$HOME/~}"
+    say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
+    return 0
+  elif [ -n "$prior" ]; then
+    if [ "$prior" = "OTHER" ]; then
+      warn "'${alias_name}' is already an alias in your shell (not a Claude-config launcher)."
+    else
+      warn "Alias '${alias_name}' already exists and points to: ${prior}"
+      say  "  ${C_DIM}(from your shell rc or a file it sources — not this profile).${C_RST}"
+    fi
+    if [ "$policy" = "strict" ]; then
+      # The caller (the agent) owns the choice of a new name — don't guess one here.
+      say "  ${C_DIM}Pick another alias and re-run, or launch with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
+      return 1
+    fi
+    local newalias=""
+    prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
+    if [ -n "$newalias" ]; then
+      write_managed_block "$rc" "$newalias" \
+"alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+      printf 'alias=%s\n' "$newalias" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+      ok "Aliased ${C_BOLD}${newalias}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+      say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${newalias}${C_RST}"
+    else
+      say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
+    fi
+    return 0
+  else
+    write_managed_block "$rc" "$alias_name" \
+"alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+    printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+    ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+    say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
+    return 0
+  fi
 }
 
+# setup_one_config — the standalone interactive (or --defaults) fresh install:
+# pick a dir + additions, layer them (apply_additions), inherit auth, write the
+# alias. Migrating a rich existing config and backing-up-and-rebuilding are owned
+# by Path A (agent-install.md) — see the file header; targeting an existing dir
+# here simply layers on top.
 setup_one_config() {
   hr
-  # 1. target config dir (the default ~/.claude is a valid target — see 1b)
+  # 1. target config dir.
   local config_dir
-  isay "${C_DIM}Tip: enter ~/.claude to back up and rebuild your DEFAULT config with these additions.${C_RST}"
-  prompt config_dir "Config folder to create/update:" "$HOME/.claude-aka"
+  isay "${C_DIM}Tip: set CT_CONFIG_DIR + CT_ADDITIONS (or use --apply) to run non-interactively.${C_RST}"
+  prompt config_dir "Config folder to create/update:" "${CT_CONFIG_DIR:-$HOME/.claude-aka}"
   config_dir="${config_dir/#\~/$HOME}"
-  # Normalize before ANY use. Strip a trailing slash so `~/.claude/` still matches the
-  # default-dir test (else it's mis-handled as a non-default profile and the backup
-  # path becomes a CHILD of the dir being moved). Make a relative path absolute so the
-  # alias + hook command strings bind to a stable location, not the cwd the installer
-  # happened to run in. Leave a bare "/" alone.
+  # Normalize: strip a trailing slash, and make a relative path absolute so the alias
+  # + hook command strings bind to a stable location, not the cwd. Leave "/" alone.
   [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
   case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
-
-  # 1b. in-place rebuild: when the target config dir ALREADY EXISTS, offer to move
-  # it to a timestamped backup, recreate it clean with the selected additions, and
-  # migrate the engineer's picks back from the backup. Works for ANY config dir —
-  # a clean upgrade/reinstall path, not just ~/.claude (the default dir is a
-  # special case below: no alias, since plain `claude` launches it). Decline →
-  # layer the additions on top in place instead.
-  local is_default=0 rebuild_backup=""
-  # Migration SOURCE defaults to the LIVE Claude Code config dir — wherever CC
-  # reads config from right now ($CLAUDE_CONFIG_DIR, else ~/.claude) — NOT a
-  # hardcoded ~/.claude. The engineer can point it at any other folder or a
-  # backup at the migrate prompt below.
-  local default_src="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  # The default ~/.claude needs no alias (plain `claude` launches it).
+  local is_default=0
   [ "$config_dir" = "$HOME/.claude" ] && is_default=1
-  if [ -d "$config_dir" ]; then
-    local _disp="${config_dir/#$HOME/~}" _rebuild_def="N"
-    # Default to rebuild only for the canonical default config; for any other
-    # existing profile default to layer-in-place so an idempotent re-run (add an
-    # addition) never surprises you by wiping the dir. --clean opts into the
-    # rebuild explicitly (state is restored from the backup either way).
-    [ "$is_default" = "1" ] && _rebuild_def="Y"
-    [ "$CT_CLEAN" = "1" ] && _rebuild_def="Y"
-    say ""
-    if [ "$is_default" = "1" ]; then
-      warn "Target is your DEFAULT Claude config (~/.claude)."
-    else
-      warn "Target ${_disp} already exists."
-    fi
-    say  "  ${C_DIM}Back up + rebuild: ${_disp} is moved to a timestamped backup and recreated clean"
-    say  "  with the current kit files. Already running aka-claude-tools here? This IS the upgrade"
-    say  "  path — it refreshes the additions to this version with no cruft.${C_RST}"
-    say  "  ${C_DIM}Not a fresh install: EVERYTHING you set up is restored automatically from the"
-    say  "  backup — conversations, memory/, history, todos, CLAUDE.md, settings.json, your agents/"
-    say  "  skills/commands/hooks, auth, and any other content (custom dirs, plugins, MCP config)."
-    say  "  It's your profile returning to itself — only stale KIT files are replaced fresh.${C_RST}"
-    say  "  ${C_DIM}Your login survives: account metadata + a file-based .credentials.json are restored"
-    say  "  from the backup, and Keychain auth is keyed to the unchanged dir path.${C_RST}"
-    say  "  ${C_DIM}A running Claude Code session keeps working — it's already loaded in memory —"
-    say  "  but it may show hook errors while files are being changed underneath it. That's"
-    say  "  normal and won't impact the install. The next launch loads the new setup.${C_RST}"
-    # Advisory: a deterministic copy preserves files byte-for-byte but can't REASON
-    # about config that needs interpretation (MCP auth/transport, CLAUDE.md @-imports
-    # that may need path rewriting, bespoke layouts). When those are present, point
-    # the user at the Claude-driven install (Path A) — it reads the whole config and
-    # migrates them intelligently. The script still preserves everything if they stay.
-    local _cx; _cx="$(detect_config_complexity "$config_dir")"
-    if [ -n "$_cx" ]; then
-      # A complex config is exactly where a deterministic rebuild is riskiest, so we
-      # DON'T default to it: flip the rebuild prompt to N (decline → layer in place,
-      # below) and steer toward Path A. An explicit --clean still opts into rebuild.
-      [ "$CT_CLEAN" != "1" ] && _rebuild_def="N"
-      say ""
-      warn "This looks like a complex config:"
-      printf '%s\n' "$_cx" | while IFS= read -r _r; do [ -n "$_r" ] && say "    ${C_DIM}• ${_r}${C_RST}"; done
-      say  "  ${C_DIM}The Claude-driven install handles these more faithfully than a script — it reads your"
-      say  "  whole config and reasons about MCP servers, @-imports & hook interdependencies. The"
-      say  "  recommended path here is ${C_RST}Path A${C_DIM}: in an authenticated Claude Code session, ask it to"
-      say  "  read ${C_RST}agent-install.md${C_DIM}. Declining the rebuild below just layers the additions on in"
-      say  "  place (safe, nothing moved) — you won't be dropped out of this installer.${C_RST}"
-    fi
-    if confirm "Back up ${_disp} and rebuild it clean?" "$_rebuild_def"; then
-      # Resolve a symlinked config dir to its REAL target so the rebuild backs up and
-      # recreates the real store, leaving the user's symlink (config-on-a-synced-
-      # volume) intact. `mv` on the link itself would rename the LINK — faking the
-      # backup as a dangling link and orphaning the real store.
-      local _rb_target="$config_dir"
-      [ -L "$config_dir" ] && _rb_target="$(cd "$config_dir" && pwd -P)"
-      rebuild_backup="${config_dir}.backup-$(date +%Y%m%d-%H%M%S)"
-      # Collision-proof the backup path. The timestamp is second-granular and a
-      # rebuild runs in well under a second, so two rebuilds in the same second
-      # (double-run, rollback-then-retry, CI loop, a leftover same-second backup)
-      # would compute the SAME path — and `mv DIR EXISTING_DIR` NESTS rather than
-      # errors, which buries the live profile and restores an empty one (silent data
-      # loss). Uniquify until the path is free.
-      if [ -e "$rebuild_backup" ]; then
-        local _bn=2
-        while [ -e "${rebuild_backup}-${_bn}" ]; do _bn=$((_bn+1)); done
-        rebuild_backup="${rebuild_backup}-${_bn}"
-      fi
-      # Arm the rollback trap BEFORE the mv: from here until the rebuild finishes,
-      # an interrupt or failure restores the backup over the half-built dir.
-      _CT_REBUILD_TARGET="$_rb_target"
-      _CT_REBUILD_BACKUP="$rebuild_backup"
-      _CT_REBUILD_DONE=0
-      mv "$_rb_target" "$rebuild_backup"
-      # Fail closed if the move didn't yield a clean, separate backup dir — never
-      # proceed to mkdir+restore on a bad move (that is the data-loss path).
-      [ -d "$rebuild_backup" ] || die "Rebuild backup move failed ($rebuild_backup not created) — aborting before any data is lost."
-      mkdir -p "$_rb_target"
-      default_src="$rebuild_backup"
-      ok "Backed up ${_disp} → ${rebuild_backup/#$HOME/~}"
-      # State that must survive a clean rebuild without a re-login. For the DEFAULT
-      # dir, ~/.claude.json (oauthAccount + onboarding) lives at $HOME and is
-      # untouched; for any OTHER dir that metadata lived inside it, so restore the
-      # onboarding fields + a file-based .credentials.json from the backup. macOS
-      # Keychain auth is keyed to the (unchanged) dir path either way.
-      if [ -f "$rebuild_backup/.claude.json" ] && grep -q '"oauthAccount"' "$rebuild_backup/.claude.json" 2>/dev/null; then
-        jq "$CLAUDE_JSON_SEED_FILTER" "$rebuild_backup/.claude.json" > "$config_dir/.claude.json" 2>/dev/null \
-          && chmod 600 "$config_dir/.claude.json" && ok "Restored onboarding metadata from the backup"
-      fi
-      if [ -f "$rebuild_backup/.credentials.json" ]; then
-        cp "$rebuild_backup/.credentials.json" "$config_dir/.credentials.json"
-        chmod 600 "$config_dir/.credentials.json"
-        ok "Restored .credentials.json — no re-login"
-      fi
-      if [ -f "$rebuild_backup/aka-claude-tools.config" ]; then
-        cp "$rebuild_backup/aka-claude-tools.config" "$config_dir/aka-claude-tools.config"
-        ok "Restored aka-claude-tools.config"
-      fi
-      # The profile's OWN data — restored automatically so a clean rebuild is an
-      # upgrade, not a fresh install. This is the dir's own state coming back
-      # (not a cross-config migration), so it is unconditional, not prompted.
-      #   • settings.json  — restored first so the build MERGES the current kit
-      #     settings onto the user's (reconciling retired rules), instead of
-      #     starting from empty. Same dir → hook paths are unchanged, no rewrite.
-      #   • CLAUDE.md      — user-authored global memory/imports, not kit content.
-      #   • session state  — conversations, memory/, prompt history, todos, tasks
-      #     (migrate_sessions / CT_SESSION_ITEMS). Everything else the user set up is
-      #     swept back below; .credentials.json was already restored above.
-      if [ -f "$rebuild_backup/settings.json" ]; then
-        cp "$rebuild_backup/settings.json" "$config_dir/settings.json"
-        ok "Restored settings.json (reconciled with this version's kit settings below)"
-      fi
-      if [ -f "$rebuild_backup/CLAUDE.md" ]; then
-        cp "$rebuild_backup/CLAUDE.md" "$config_dir/CLAUDE.md"
-        ok "Restored CLAUDE.md ($(wc -l < "$config_dir/CLAUDE.md" | tr -d ' ') lines)"
-      fi
-      migrate_sessions "$rebuild_backup" "$config_dir"
-      # "Lose nothing" sweep: after the known-item restores above, bring back EVERY
-      # other file the user had set up — bespoke top-level dirs (a framework, MCP
-      # config, plugins), nested hook subdirs, extra JSON, caches — that the kit's
-      # hardcoded allowlist would otherwise strand in the backup. A rebuild restores a
-      # profile's OWN data to itself (no secret-spreading), so we migrate everything
-      # and leave behind only stale KIT files: preserve_from_backup skips anything
-      # already restored, kit-managed hooks (re-placed fresh), and any path the kit
-      # ships. This generalizes the old "restore unmarked user hooks" step to the tree
-      # so a clean rebuild can never silently drop a user's content.
-      preserve_from_backup "$rebuild_backup" "$config_dir" "$CONFIG_SRC"
-      # Transparency: report exactly what runtime state came back. An upgrade
-      # should be auditable — the kit's "never change things silently" principle
-      # applies to restores too. Counts are best-effort and portable (BSD/GNU).
-      if [ -d "$config_dir/projects" ]; then
-        local _nmem _nconv
-        _nmem="$(find "$config_dir/projects" -type d -name memory 2>/dev/null | wc -l | tr -d ' ')"
-        _nconv="$(find "$config_dir/projects" -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
-        ok "Restored runtime state: ${_nmem} memory dir(s), ${_nconv} conversation(s)"
-      fi
-    else
-      # Declining the rebuild is NOT an exit: we continue right here and layer the
-      # additions onto the existing dir. Nothing is moved or removed, so it's lossless
-      # — the kit's files/registrations are merged in alongside everything you have.
-      ok  "Layering additions onto ${_disp} in place — nothing moved, your config stays as-is."
-      if [ -n "$_cx" ]; then
-        say "  ${C_DIM}(For a clean rebuild that reasons about your MCP servers / @-imports, quit now and"
-        say "  use Path A instead — ask Claude Code to read ${C_RST}agent-install.md${C_DIM}.)${C_RST}"
-      fi
-    fi
-  fi
 
   # 2. alias name (default derived from folder basename: ~/.claude-aka -> aka).
-  # Skipped for the default dir — plain `claude` already launches it.
   local alias_name=""
   if [ "$is_default" != "1" ]; then
     local base alias_default
@@ -628,161 +436,24 @@ setup_one_config() {
     prompt alias_name "Shell alias to launch it:" "$alias_default"
   fi
 
-  # 3. migrate from an existing config — scan each category, pick what to bring
-  # over. Default source = the LIVE CC config dir derived above (or the backup
-  # when rebuilding); the engineer can type any other folder, or decline.
-  # A rebuild already auto-restored EVERYTHING from its own backup (the explicit
-  # restores + preserve_from_backup sweep above), so this prompt is now only for
-  # pulling in a DIFFERENT config — default N. (It defaulted Y pre-sweep, when the
-  # backup's own agents/skills/commands had to be re-imported here by hand.)
-  local mig_def="N" migrate_src=""
-  isay ""
-  if confirm "Migrate items from an existing Claude config into this profile?" "$mig_def"; then
-    prompt migrate_src "  Migrate FROM which config folder?" "$default_src"
-    migrate_src="${migrate_src/#\~/$HOME}"
-    [ -d "$migrate_src" ] || { warn "No such folder: ${migrate_src/#$HOME/~} — skipping migration."; migrate_src=""; }
-    [ -n "$migrate_src" ] && [ "$migrate_src" = "$config_dir" ] && { warn "Source is this profile itself — skipping migration."; migrate_src=""; }
-    if [ -n "$migrate_src" ]; then
-      mkdir -p "$config_dir"
-      ok "Migrating from ${migrate_src/#$HOME/~}"
-      # Advisory: if the SOURCE config is complex, a deterministic copy can't reason
-      # about what it carries over (MCP auth/transport, CLAUDE.md @-imports whose
-      # paths may need rewriting for the new profile, hook interdependencies). Point
-      # the user at Path A, which reads the source and migrates it intelligently. Not
-      # shown for the rebuild backup — that's the profile's own data coming home, not
-      # a cross-config import. Advisory only; the migration below still proceeds.
-      if [ "$migrate_src" != "$rebuild_backup" ]; then
-        local _scx; _scx="$(detect_config_complexity "$migrate_src")"
-        if [ -n "$_scx" ]; then
-          warn "The config you're importing from looks complex:"
-          printf '%s\n' "$_scx" | while IFS= read -r _r; do [ -n "$_r" ] && say "    ${C_DIM}• ${_r}${C_RST}"; done
-          say  "  ${C_DIM}A script copies these as-is; it can't rewrite @-import paths for the new profile or"
-          say  "  reason about MCP auth. For a faithful import, consider ${C_RST}Path A${C_DIM} — ask an authenticated"
-          say  "  Claude Code session to read ${C_RST}agent-install.md${C_DIM}. Or continue here to copy them verbatim.${C_RST}"
-        fi
-      fi
-      # In the rebuild path the source IS this profile's own backup, and the explicit
-      # restores + preserve_from_backup sweep above already brought back EVERYTHING
-      # (settings.json, CLAUDE.md, session history, agents/skills/commands/hooks and
-      # any other content). So there is nothing left to pick — skip the per-category
-      # prompts entirely for the backup source; they apply only to a DIFFERENT config.
-      [ "$migrate_src" = "$rebuild_backup" ] && isay "  ${C_DIM}This is the rebuild backup — your settings, CLAUDE.md, history and all other content were already restored automatically. Nothing to pick.${C_RST}"
-      if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/settings.json" ] && confirm "  • merge your existing settings.json (hook paths auto-rewritten)?" "Y"; then
-        rewrite_hook_paths "$config_dir" < "$migrate_src/settings.json" > "$config_dir/settings.json.mig"
-        # Dangerous-mode settings are the user's call, not ours: if their config
-        # already runs with bypassPermissions / skip-prompt flags, surface it and
-        # offer to turn it off — but KEEP their setting by default. The kit's own
-        # template never adds these; this only honors what the user already had.
-        if jq -e '(.permissions.defaultMode == "bypassPermissions") or (.skipDangerousModePermissionPrompt == true) or (.skipAutoPermissionPrompt == true)' "$config_dir/settings.json.mig" >/dev/null 2>&1; then
-          isay "    ${C_DIM}Heads-up: your settings enable bypassPermissions and/or the skip-prompt flags,${C_RST}"
-          isay "    ${C_DIM}so Claude runs without permission prompts by default in this profile.${C_RST}"
-          if confirm "  • keep bypassPermissions / skip-prompt flags as you had them?" "Y"; then
-            ok "Kept your bypassPermissions / skip-prompt settings as-is."
-          else
-            jq '(if .permissions.defaultMode == "bypassPermissions" then .permissions |= del(.defaultMode) else . end)
-                | del(.skipDangerousModePermissionPrompt, .skipAutoPermissionPrompt)' \
-              "$config_dir/settings.json.mig" > "$config_dir/settings.json.mig.tmp" \
-              && mv "$config_dir/settings.json.mig.tmp" "$config_dir/settings.json.mig"
-            ok "Turned off bypassPermissions / skip-prompt flags for this profile."
-          fi
-        fi
-        mv "$config_dir/settings.json.mig" "$config_dir/settings.json"
-        ok "Staged your settings.json → this profile (hook paths rewritten)"
-      fi
-      if [ "$migrate_src" != "$rebuild_backup" ] && [ -f "$migrate_src/CLAUDE.md" ] && confirm "  • copy your CLAUDE.md?" "N"; then
-        cp "$migrate_src/CLAUDE.md" "$config_dir/CLAUDE.md"; ok "Copied CLAUDE.md"
-      fi
-      # Per-category picks apply ONLY to a different source config; the rebuild backup
-      # was already swept back wholesale above (preserve_from_backup), so re-offering
-      # its categories here would be redundant.
-      if [ "$migrate_src" != "$rebuild_backup" ]; then
-        migrate_category "$migrate_src" "$config_dir" agents        file
-        migrate_category "$migrate_src" "$config_dir" skills        dir
-        migrate_category "$migrate_src" "$config_dir" commands      file
-        migrate_category "$migrate_src" "$config_dir" output-styles file
-        migrate_category "$migrate_src" "$config_dir" hooks         file
-        migrate_category "$migrate_src" "$config_dir" workflows     file
-      fi
-      # Optional: bring over session/history state (past conversations, input
-      # history, todos) from ANOTHER config. OFF by default — it's personal and
-      # can be large, and secrets / shell-env / paste caches are never included
-      # (see migrate_sessions in common.sh). Skipped when the source is this
-      # profile's own rebuild backup — that state was already restored above.
-      if [ "$migrate_src" != "$rebuild_backup" ]; then
-        isay ""
-        if confirm "  • also migrate session history (past conversations, input history, todos)?" "N"; then
-          migrate_sessions "$migrate_src" "$config_dir"
-        fi
-      fi
-    fi
-  fi
-
+  # 3. layer the additions (the deterministic engine).
   apply_additions "$config_dir"
 
-  # 4e. inherit auth so the engineer doesn't re-onboard / re-login.
-  # The default profile needs neither: its ~/.claude.json lives at $HOME (not in
-  # the config dir) and its Keychain/credentials were preserved in step 1b.
+  # 4. inherit auth so the engineer doesn't re-onboard / re-login. The default
+  # profile needs none: its ~/.claude.json lives at $HOME, not in the config dir.
   if [ "$SEED_AUTH" = "1" ] && [ "$is_default" != "1" ]; then
     seed_auth "$config_dir" "$alias_name"
   fi
 
-  # 5. write alias to shell rc (the default dir needs none — plain `claude`)
+  # 5. alias to the shell rc (the default dir needs none — plain `claude`).
   if [ "$is_default" = "1" ]; then
     say ""
     ok "Default config ~/.claude ready — plain ${C_BOLD}claude${C_RST} launches it."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
-    say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
+    say "  ${C_DIM}Restart claude to load it — a running session keeps the old config in memory.${C_RST}"
   else
-    local rc; rc="$(detect_shell_rc)"
-    # Review existing aliases before inserting ours — check the rc and every file
-    # reachable through its `source` chain (fully recursive, cycle-safe), so we
-    # never silently duplicate or shadow an alias the user already has (e.g. one a
-    # fleet-wide aliases file provides). See alias_target_elsewhere in common.sh;
-    # the agent-install path does the same review and adds judgment on edge cases.
-    local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
-    if [ "$prior" = "$config_dir" ]; then
-      # Already resolves to THIS profile from elsewhere → don't add a duplicate;
-      # drop any stale managed block of ours so there's a single definition.
-      if remove_managed_block "$rc" "$alias_name"; then
-        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — removed our now-redundant block."
-      else
-        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — not adding a duplicate."
-      fi
-    elif [ -n "$prior" ]; then
-      if [ "$prior" = "OTHER" ]; then
-        warn "'${alias_name}' is already an alias in your shell (not a Claude-config launcher)."
-      else
-        warn "Alias '${alias_name}' already exists and points to: ${prior}"
-        say  "  ${C_DIM}(from your shell rc or a file it sources — not this profile).${C_RST}"
-      fi
-      local newalias=""
-      prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
-      if [ -n "$newalias" ]; then
-        write_managed_block "$rc" "$newalias" \
-"alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-        alias_name="$newalias"
-        printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
-        ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
-      else
-        say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
-      fi
-    else
-      write_managed_block "$rc" "$alias_name" \
-"alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-      printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
-      ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
-    fi
-
     say ""
-    ok "Config '${alias_name}' ready."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
-    say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
+    setup_alias "$config_dir" "$alias_name" interactive
   fi
-
-  # Rebuild finished cleanly — disarm the rollback trap for this config.
-  # (Must use `if`, not `&&`: a bare test that's false would make this the
-  # function's non-zero return and trip `set -e` in the caller.)
-  if [ -n "$rebuild_backup" ]; then _CT_REBUILD_DONE=1; fi
 }
 
 # ── deterministic engine: layer additions onto a config dir ──────────────────
@@ -1117,11 +788,28 @@ apply_entry() {
   ok "Applied additions to ${config_dir/#$HOME/~}"
 }
 
+# ── --alias entry: create/check the launcher alias, the sole sanctioned rc write ─
+# install.sh owns shell-rc writes so the agent never edits the rc itself (which
+# would force loosening startup-write-guard / command-guard). The agent invokes this
+# after --apply; on an unresolved name collision it exits non-zero so the agent
+# picks another name and re-invokes. Idempotent: re-running for the same dir+alias
+# replaces the managed block rather than adding a duplicate.
+alias_entry() {
+  [ -n "${CT_CONFIG_DIR:-}" ] || die "--alias requires CT_CONFIG_DIR (the target profile dir)."
+  [ -n "${CT_ALIAS:-}" ]      || die "--alias requires CT_ALIAS (the alias name)."
+  local config_dir="${CT_CONFIG_DIR/#\~/$HOME}"
+  [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
+  case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
+  setup_alias "$config_dir" "$CT_ALIAS" strict
+}
+
 # Run the installer only when EXECUTED, not when SOURCED. Sourcing the script (with
 # its top-level definitions) lets the test suite reach the pure helpers above
-# (merge_settings, prune_hook_regs, the rollback handler) without performing an
-# install. Tests source inside a subshell so the top-level `set -euo`/traps stay
-# contained. A normal `./install.sh` is unaffected.
+# (merge_settings, prune_hook_regs, setup_alias, …) without performing an install.
+# Tests source inside a subshell so the top-level `set -euo` stays contained. A
+# normal `./install.sh` is unaffected.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  if [ "$CT_APPLY" = "1" ]; then apply_entry; else ct_main; fi
+  if   [ "$CT_APPLY" = "1" ];      then apply_entry
+  elif [ "$CT_ALIAS_MODE" = "1" ]; then alias_entry
+  else ct_main; fi
 fi

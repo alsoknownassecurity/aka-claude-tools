@@ -5,8 +5,8 @@
 #   (b) added their OWN permission rules (a deny + an allow the kit never ships),
 #   (c) added their OWN hook (an unmarked hook file + its settings registration),
 #   (d) TWEAKED a kit hook's registration (changed leak-guard's matcher).
-# Re-running the installer (the --clean upgrade path, which refreshes kit-managed
-# FILES to the current version) must:
+# Re-running the installer (a plain layered re-run, which re-places kit-managed
+# FILES at the current version) must:
 #   • UNION the user's perms/hooks — never drop them,
 #   • RESTORE the managed kit file to the kit version (user's body edit reverted),
 #   • re-add the kit's CANONICAL hook registration,
@@ -39,7 +39,8 @@ assert_ok "baseline adopted a kit deny" \
 # ── (2) make the profile MESSY (simulate a user who has been living in it) ─────
 # (a) hand-edit the MANAGED kit file — corrupt its body. The managed marker stays
 #     (a real user editing the script keeps the comment), so this is the kit's
-#     own file with user damage, which --clean must overwrite with the kit version.
+#     own file with user damage, which a re-run must overwrite with the kit version
+#     (place_file re-places every kit hook on each run).
 HAND_EDIT_SENTINEL="### USER HAND EDIT — should be reverted by upgrade"
 printf '%s\n' "$HAND_EDIT_SENTINEL" >> "$P/hooks/leak-guard.sh"
 assert_lit "managed marker still on the edited kit file" \
@@ -71,14 +72,15 @@ jq --arg wg "$WG" --arg uh "$U_HOOK" \
    ' "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 assert_ok "messy settings still valid JSON" jq -e . "$S"
 
-# ── (3) re-run the installer on the --clean (refresh-files) upgrade path ───────
-run --clean; rc=$?
+# ── (3) re-run the installer (layers in place, re-placing kit files) ──────────
+run; rc=$?
 assert_eq "messy upgrade exits 0" "0" "$rc"
 assert_ok "settings.json still valid JSON after upgrade" jq -e . "$S"
 
-# A timestamped backup was made (the --clean rebuild path).
+# Layer-in-place: nothing is moved, so NO timestamped backup is created (that was
+# the retired --clean rebuild path). The kit files are refreshed via place_file.
 n_bak=$(find "$SB" -maxdepth 1 -type d -name '.claude-aka.backup-*' 2>/dev/null | wc -l | tr -d ' ')
-assert_eq "a timestamped backup was created by --clean" "1" "$n_bak"
+assert_eq "no rebuild backup (layered in place)" "0" "$n_bak"
 
 # ── (4) ASSERTIONS ────────────────────────────────────────────────────────────
 

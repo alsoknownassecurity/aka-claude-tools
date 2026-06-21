@@ -45,22 +45,4 @@ assert_ok "statusLine removed when basename matches" jqe "$PL" 'has("statusLine"
 KEEP="$(printf %s '{"statusLine":{"command":"/my/own.sh"}}' | src prune_statusline statusline.sh)"
 assert_ok "unrelated statusLine kept" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
 
-# ── ct_rebuild_rollback: restores a pre-planted backup over a missing target ──
-SB="$(sandbox)"
-bk="$SB/backup"; tg="$SB/target"
-mkdir -p "$bk"; echo SENTINEL > "$bk/keepme"        # backup holds the "real" config
-( source "$REPO_ROOT/install.sh" >/dev/null 2>&1
-  _CT_REBUILD_BACKUP="$bk"; _CT_REBUILD_TARGET="$tg"; _CT_REBUILD_DONE=0; _CT_ROLLBACK_RAN=0
-  ct_rebuild_rollback >/dev/null 2>&1 )
-assert_file "interrupted rebuild restores target from backup" "$tg/keepme"
-assert_grep "restored content is intact" 'SENTINEL' "$tg/keepme"
-
-# When the rebuild COMPLETED (_CT_REBUILD_DONE=1), rollback is a no-op.
-bk2="$SB/backup2"; tg2="$SB/target2"; mkdir -p "$bk2"; echo X > "$bk2/keepme"
-( source "$REPO_ROOT/install.sh" >/dev/null 2>&1
-  _CT_REBUILD_BACKUP="$bk2"; _CT_REBUILD_TARGET="$tg2"; _CT_REBUILD_DONE=1; _CT_ROLLBACK_RAN=0
-  ct_rebuild_rollback >/dev/null 2>&1 )
-[ -e "$tg2" ] && fail "completed rebuild is NOT rolled back" "target restored despite DONE=1" \
-              || pass "completed rebuild is NOT rolled back"
-
 t_summary
