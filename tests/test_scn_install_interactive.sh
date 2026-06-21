@@ -45,9 +45,26 @@ EXP="$SB/drive.exp"
 #   ALL OTHERS      = n   (assertable they do NOT land — proves reject is honored)
 # The second-profile pass reuses the same selection. exp_internal off keeps the
 # log clean; a global timeout fails loudly rather than hanging the suite.
+#
+# The per-addition matchers are DERIVED from config/additions.json (the exact
+# prompt the installer renders — .prompt // .name, matched via `expect -ex` so
+# label metachars like ( | [ ? are literal) rather than hardcoded, so this test
+# tracks the manifest across the public-release label rename (e.g. "RTK saver" →
+# "rtk-safe", "Web guard" → "leak-guard"). Accept-by-id stays stable: secure-settings
+# and wrap-up are y, everything else n.
+ACCEPT_IDS=" secure-settings wrap-up "
+ADDITION_MATCHERS=""
+while IFS=$'\t' read -r _aid _alabel; do
+  case "$ACCEPT_IDS" in *" $_aid "*) _ans=y ;; *) _ans=n ;; esac
+  ADDITION_MATCHERS+="  -ex {$_alabel} { send \"$_ans\\r\"; exp_continue }"$'\n'
+done < <(jq -r '.additions[] | [.id, (.prompt // .name)] | @tsv' "$ADDITIONS")
+
 cat > "$EXP" <<EXPECT
 set timeout 30
 log_user 1
+# Force a wide PTY so long addition prompts never soft-wrap — a wrapped line would
+# split the literal label across a newline and defeat the -ex substring match.
+set stty_init "rows 80 cols 1000"
 # spawn the installer under a PTY; --no-auth-inherit, NO --defaults.
 spawn env HOME=$SB SHELL=/bin/bash bash $REPO_ROOT/install.sh --no-auth-inherit
 
@@ -64,16 +81,7 @@ expect {
     exp_continue
   }
   -re {Migrate items from an existing Claude config} { send "n\r"; exp_continue }
-  -re {Secure base settings}            { send "y\r"; exp_continue }
-  -re {/wrap-up command}                { send "y\r"; exp_continue }
-  -re {Web guard}                       { send "n\r"; exp_continue }
-  -re {Bash guard}                      { send "n\r"; exp_continue }
-  -re {RTK saver}                       { send "n\r"; exp_continue }
-  -re {Responsive status line}          { send "n\r"; exp_continue }
-  -re {secure-deep-research workflow}   { send "n\r"; exp_continue }
-  -re {Harness pointer}                 { send "n\r"; exp_continue }
-  -re {Shell startup audit skill}       { send "n\r"; exp_continue }
-  -re {Startup-write guard}             { send "n\r"; exp_continue }
+$ADDITION_MATCHERS
   -re {Set up another config folder} {
     if {\$pass == 1} { set pass 2; send "y\r" } else { send "n\r" }
     exp_continue
