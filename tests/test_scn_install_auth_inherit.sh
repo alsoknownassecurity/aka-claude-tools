@@ -27,6 +27,14 @@ echo "test_scn_install_auth_inherit:"
 
 OS="$(uname)"
 
+# Portable octal file mode. BSD stat uses `-f '%Lp'`; GNU stat uses `-c '%a'`.
+# These are NOT interchangeable across flavors — GNU's `-f` means
+# `--file-system`, so a `stat -f '%Lp' … || stat -c '%a' …` fallback chain
+# prints filesystem garbage AND the mode on Linux. Branch on the OS instead.
+file_mode() {  # file_mode PATH -> octal perms (e.g. 600)
+  if [ "$OS" = "Darwin" ]; then stat -f '%Lp' "$1"; else stat -c '%a' "$1"; fi
+}
+
 # ── a realistic "existing login" fixture: oauthAccount + onboarding flags PLUS a
 # payload of things that must NOT be inherited (PII/secret/cruft). ─────────────
 seed_existing_login() {
@@ -115,14 +123,14 @@ else
     "sk-SECRET-TOKEN-DO-NOT-COPY" "$CA"
   # File-based creds must be locked down 0600 (owner-only).
   if [ -f "$CA" ]; then
-    perm="$(stat -f '%Lp' "$CA" 2>/dev/null || stat -c '%a' "$CA" 2>/dev/null)"
+    perm="$(file_mode "$CA")"
     assert_eq "A(Linux): copied credentials.json is mode 600" "600" "$perm"
   fi
 fi
 
 # The seeded .claude.json itself must be 0600 (it carries account metadata).
 if [ -f "$JA" ]; then
-  jperm="$(stat -f '%Lp' "$JA" 2>/dev/null || stat -c '%a' "$JA" 2>/dev/null)"
+  jperm="$(file_mode "$JA")"
   assert_eq "A: seeded .claude.json is mode 600" "600" "$jperm"
 fi
 
