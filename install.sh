@@ -45,6 +45,15 @@
 #                      commands, skills) to the current version rather than leaving the
 #                      old ones in place. Settings permissions are reconciled (adopt
 #                      new / retire dropped) in both paths.
+#   --apply            DETERMINISTIC ENGINE mode: layer the additions named in
+#                      $CT_ADDITIONS onto $CT_CONFIG_DIR and exit. No prompts, no
+#                      migration, no alias, no auth — just the repeatable mechanics
+#                      (place files, union settings onto whatever is already in the
+#                      dir, reconcile retired perms, register hooks). This is the
+#                      entry point Path A (agent-install.md) invokes after it has
+#                      done the judgment work (scan + migrate the user's config);
+#                      also usable directly for a scripted/CI fresh install.
+#                      Requires CT_CONFIG_DIR and CT_ADDITIONS; implies non-interactive.
 
 set -euo pipefail
 
@@ -58,11 +67,13 @@ source "$REPO_DIR/shared/lib/common.sh"
 
 SEED_AUTH=1
 CT_CLEAN=0
+CT_APPLY=0
 for arg in "$@"; do
   case "$arg" in
     --defaults)        export CT_NONINTERACTIVE=1 ;;
     --no-auth-inherit) SEED_AUTH=0 ;;
     --clean)           CT_CLEAN=1 ;;
+    --apply)           CT_APPLY=1; export CT_NONINTERACTIVE=1 ;;
   esac
 done
 
@@ -105,13 +116,17 @@ trap 'rc=$?; ct_rebuild_rollback; exit $rc' EXIT
 # jq drives the whole settings merge — required. Offer to install it via the
 # detected package manager; abort if we can't get it.
 ensure_dep jq "jq (required)" 1
-command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
-# bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
-# additions are selected — see the build step below.
+# The claude-CLI check and the banner are installer chrome — skip them in --apply
+# (engine) mode, which is invoked programmatically and only needs jq.
+if [ "$CT_APPLY" != "1" ]; then
+  command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
+  # bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
+  # additions are selected — see the build step below.
 
-say ""
-printf '%s%s aka-claude-tools installer %s\n' "$C_BOLD" "$C_BLU" "$C_RST"
-say "${C_DIM}Isolated Claude config folders + aliases, with the must-have additions.${C_RST}"
+  say ""
+  printf '%s%s aka-claude-tools installer %s\n' "$C_BOLD" "$C_BLU" "$C_RST"
+  say "${C_DIM}Isolated Claude config folders + aliases, with the must-have additions.${C_RST}"
+fi
 
 # ── settings merge ───────────────────────────────────────────────────────────
 # merge_settings <existing.json|''> <additions.json-string>  -> merged JSON on stdout
@@ -702,6 +717,84 @@ setup_one_config() {
     fi
   fi
 
+  apply_additions "$config_dir"
+
+  # 4e. inherit auth so the engineer doesn't re-onboard / re-login.
+  # The default profile needs neither: its ~/.claude.json lives at $HOME (not in
+  # the config dir) and its Keychain/credentials were preserved in step 1b.
+  if [ "$SEED_AUTH" = "1" ] && [ "$is_default" != "1" ]; then
+    seed_auth "$config_dir" "$alias_name"
+  fi
+
+  # 5. write alias to shell rc (the default dir needs none — plain `claude`)
+  if [ "$is_default" = "1" ]; then
+    say ""
+    ok "Default config ~/.claude ready — plain ${C_BOLD}claude${C_RST} launches it."
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
+    say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
+  else
+    local rc; rc="$(detect_shell_rc)"
+    # Review existing aliases before inserting ours — check the rc and every file
+    # reachable through its `source` chain (fully recursive, cycle-safe), so we
+    # never silently duplicate or shadow an alias the user already has (e.g. one a
+    # fleet-wide aliases file provides). See alias_target_elsewhere in common.sh;
+    # the agent-install path does the same review and adds judgment on edge cases.
+    local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
+    if [ "$prior" = "$config_dir" ]; then
+      # Already resolves to THIS profile from elsewhere → don't add a duplicate;
+      # drop any stale managed block of ours so there's a single definition.
+      if remove_managed_block "$rc" "$alias_name"; then
+        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — removed our now-redundant block."
+      else
+        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — not adding a duplicate."
+      fi
+    elif [ -n "$prior" ]; then
+      if [ "$prior" = "OTHER" ]; then
+        warn "'${alias_name}' is already an alias in your shell (not a Claude-config launcher)."
+      else
+        warn "Alias '${alias_name}' already exists and points to: ${prior}"
+        say  "  ${C_DIM}(from your shell rc or a file it sources — not this profile).${C_RST}"
+      fi
+      local newalias=""
+      prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
+      if [ -n "$newalias" ]; then
+        write_managed_block "$rc" "$newalias" \
+"alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+        alias_name="$newalias"
+        printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+        ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+      else
+        say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
+      fi
+    else
+      write_managed_block "$rc" "$alias_name" \
+"alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
+      printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+      ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
+    fi
+
+    say ""
+    ok "Config '${alias_name}' ready."
+    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
+    say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
+  fi
+
+  # Rebuild finished cleanly — disarm the rollback trap for this config.
+  # (Must use `if`, not `&&`: a bare test that's false would make this the
+  # function's non-zero return and trip `set -e` in the caller.)
+  if [ -n "$rebuild_backup" ]; then _CT_REBUILD_DONE=1; fi
+}
+
+# ── deterministic engine: layer additions onto a config dir ──────────────────
+# apply_additions <config_dir>  — place the selected additions (CT_ADDITIONS) and
+# merge their settings onto whatever already lives in <config_dir> (incl. a
+# settings.json the agent migrated in first). No prompts, no migration, no alias,
+# no auth: Path A (the agent) owns that judgment and calls this for the repeatable
+# mechanics; the standalone installer calls it after its interactive preamble.
+# Honors CT_NONINTERACTIVE (reconcile + statusline-location take their
+# non-interactive defaults). Reusable entry point for the --apply mode.
+apply_additions() {
+  local config_dir="$1"
   # 4. select additions — the menu (which additions exist, their order, prompt
   # text, and default) is driven ENTIRELY by config/additions.json so Path B
   # (this script) and Path A (agent-install.md) can't drift. Each addition's
@@ -989,71 +1082,6 @@ setup_one_config() {
 
   # tidy empty dirs
   rmdir "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows" 2>/dev/null || true
-
-  # 4e. inherit auth so the engineer doesn't re-onboard / re-login.
-  # The default profile needs neither: its ~/.claude.json lives at $HOME (not in
-  # the config dir) and its Keychain/credentials were preserved in step 1b.
-  if [ "$SEED_AUTH" = "1" ] && [ "$is_default" != "1" ]; then
-    seed_auth "$config_dir" "$alias_name"
-  fi
-
-  # 5. write alias to shell rc (the default dir needs none — plain `claude`)
-  if [ "$is_default" = "1" ]; then
-    say ""
-    ok "Default config ~/.claude ready — plain ${C_BOLD}claude${C_RST} launches it."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
-    say "  ${C_DIM}Restart claude to load the rebuilt config — a running session keeps the old one in memory.${C_RST}"
-  else
-    local rc; rc="$(detect_shell_rc)"
-    # Review existing aliases before inserting ours — check the rc and every file
-    # reachable through its `source` chain (fully recursive, cycle-safe), so we
-    # never silently duplicate or shadow an alias the user already has (e.g. one a
-    # fleet-wide aliases file provides). See alias_target_elsewhere in common.sh;
-    # the agent-install path does the same review and adds judgment on edge cases.
-    local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
-    if [ "$prior" = "$config_dir" ]; then
-      # Already resolves to THIS profile from elsewhere → don't add a duplicate;
-      # drop any stale managed block of ours so there's a single definition.
-      if remove_managed_block "$rc" "$alias_name"; then
-        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — removed our now-redundant block."
-      else
-        ok "Alias ${C_BOLD}${alias_name}${C_RST} already resolves to this profile via your shell config — not adding a duplicate."
-      fi
-    elif [ -n "$prior" ]; then
-      if [ "$prior" = "OTHER" ]; then
-        warn "'${alias_name}' is already an alias in your shell (not a Claude-config launcher)."
-      else
-        warn "Alias '${alias_name}' already exists and points to: ${prior}"
-        say  "  ${C_DIM}(from your shell rc or a file it sources — not this profile).${C_RST}"
-      fi
-      local newalias=""
-      prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
-      if [ -n "$newalias" ]; then
-        write_managed_block "$rc" "$newalias" \
-"alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-        alias_name="$newalias"
-        printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
-        ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
-      else
-        say "  ${C_DIM}No alias written. Launch this profile with:${C_RST}  CLAUDE_CONFIG_DIR=\"${config_dir}\" claude"
-      fi
-    else
-      write_managed_block "$rc" "$alias_name" \
-"alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-      printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
-      ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
-    fi
-
-    say ""
-    ok "Config '${alias_name}' ready."
-    [ -n "$rebuild_backup" ] && say "  ${C_DIM}Your conversations, memory, history & settings were restored. Backup kept at ${rebuild_backup/#$HOME/~} as a safety net (also holds excluded caches: shell-snapshots, paste-cache, file-history, session-env) — delete it once you're happy.${C_RST}"
-    say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
-  fi
-
-  # Rebuild finished cleanly — disarm the rollback trap for this config.
-  # (Must use `if`, not `&&`: a bare test that's false would make this the
-  # function's non-zero return and trip `set -e` in the caller.)
-  if [ -n "$rebuild_backup" ]; then _CT_REBUILD_DONE=1; fi
 }
 
 # ── main loop ────────────────────────────────────────────────────────────────
@@ -1068,11 +1096,32 @@ ct_main() {
   ok "Done. ${C_DIM}Re-run ./install.sh any time to add or update a config.${C_RST}"
 }
 
+# ── --apply entry: the deterministic engine, invoked by Path A or a script ─────
+# Layer the additions named in $CT_ADDITIONS onto $CT_CONFIG_DIR and exit. The
+# heavy lifting is apply_additions (the same code the interactive installer runs);
+# this only validates inputs and normalizes the dir, then hands off. No prompts,
+# alias, migration, or auth — the caller (the agent, or CI) owns those.
+apply_entry() {
+  [ -n "${CT_CONFIG_DIR:-}" ] || die "--apply requires CT_CONFIG_DIR (the target profile dir)."
+  # CT_ADDITIONS must be SET (an empty value is valid — it selects no additions and
+  # prunes any the dir already had). Distinguish unset from empty so a missing var
+  # fails loudly instead of silently installing nothing.
+  [ -n "${CT_ADDITIONS+x}" ] || die "--apply requires CT_ADDITIONS (space-separated addition ids; empty selects none)."
+  local config_dir="${CT_CONFIG_DIR/#\~/$HOME}"
+  # Same normalization as setup_one_config: strip a trailing slash, make relative
+  # absolute, so hook/command paths bind to a stable location.
+  [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
+  case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
+  mkdir -p "$config_dir"
+  apply_additions "$config_dir"
+  ok "Applied additions to ${config_dir/#$HOME/~}"
+}
+
 # Run the installer only when EXECUTED, not when SOURCED. Sourcing the script (with
 # its top-level definitions) lets the test suite reach the pure helpers above
 # (merge_settings, prune_hook_regs, the rollback handler) without performing an
 # install. Tests source inside a subshell so the top-level `set -euo`/traps stay
 # contained. A normal `./install.sh` is unaffected.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  ct_main
+  if [ "$CT_APPLY" = "1" ]; then apply_entry; else ct_main; fi
 fi
