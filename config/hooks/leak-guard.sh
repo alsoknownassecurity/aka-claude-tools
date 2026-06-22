@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # aka-claude-tools:managed-hook — installer-owned; auto-removed on upgrade if renamed/retired. Safe to delete.
-# leak-guard.sh — PreToolUse hook for WebSearch / WebFetch (WEB egress only).
+# leak-guard.sh — PreToolUse hook for WebSearch / WebFetch / SearXNG MCP (WEB egress only).
 #
 # The WEB egress guard. Pure bash + jq (NO bun) — so the web surface stays guarded
 # even if bun is broken (a runtime-diversity hedge), and a web-only install needs no
@@ -45,9 +45,15 @@ command -v jq >/dev/null 2>&1 || { echo "warn (leak-guard): jq not found (it is 
 input="$(cat)"
 tool="$(jq -r '.tool_name // empty' <<<"$input" 2>/dev/null || true)"
 
-# Web tools only — Bash (and everything else) is not this hook's surface.
+# Web egress tools only — Bash (and everything else) is not this hook's surface.
+# Also covers the SearXNG MCP tools (mcp__searxng__searxng_web_search → .query,
+# mcp__searxng__web_url_read → .url): secure-deep-research routes SENSITIVE topics
+# through self-hosted SearXNG precisely for privacy, so that egress surface must be
+# scanned too — both params are extracted below. Admitted unconditionally (a no-op
+# when no SearXNG server is configured), so a hand-configured server is covered as well.
 case "$tool" in
     WebSearch|WebFetch) ;;
+    mcp__searxng__*) ;;
     *) exit 0 ;;
 esac
 query="$(jq -r '[.tool_input.query, .tool_input.url, .tool_input.prompt] | map(select(. != null)) | join(" ")' <<<"$input" 2>/dev/null || true)"

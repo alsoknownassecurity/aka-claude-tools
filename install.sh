@@ -749,10 +749,13 @@ apply_additions() {
 
   if is_selected leak-guard "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
-    # Registered on WEB tools only — Bash egress is command-guard's surface now (one
-    # PreToolUse process per tool surface; no double-spawn on Bash).
+    # Registered on WEB-egress tools only — Bash egress is command-guard's surface now
+    # (one PreToolUse process per tool surface; no double-spawn on Bash). Includes the
+    # SearXNG MCP tools so secure-deep-research's sensitive-topic path (which routes
+    # through self-hosted SearXNG for privacy) is egress-scanned too; harmless no-op when
+    # no SearXNG server is configured. leak-guard.sh's tool-name gate admits the same set.
     add="$(jq --arg cmd "$cqd/hooks/leak-guard.sh" \
-      '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
+      '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch|mcp__searxng__",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Optional: stronger secret detection. Degrades to regex tiers without it.
     ensure_dep trufflehog "trufflehog (leak-guard secret detection)" 0 || true
   fi

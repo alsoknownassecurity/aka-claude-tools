@@ -14,9 +14,9 @@
       "name": "leak-guard",
       "prompt": "leak-guard (block secrets + internal identifiers in WEB queries)?",
       "recommended": true,
-      "description": "PreToolUse guard on WebSearch/WebFetch (WEB egress only — Bash egress is command-guard's surface). Blocks web queries/urls/prompts containing detected secrets (trufflehog), token/SSH-key shapes, and — if configured — your org's internal identifiers (CT_EGRESS_PATTERNS, read from the install-compiled org-egress.json sidecar; portable-subset regex only). Pure bash + jq, so it keeps guarding the web surface even if bun is broken (runtime-diversity hedge), and a web-only install needs no bun.",
+      "description": "PreToolUse guard on WebSearch/WebFetch and the SearXNG MCP tools (WEB egress only — Bash egress is command-guard's surface). Blocks web queries/urls/prompts containing detected secrets (trufflehog), token/SSH-key shapes, and — if configured — your org's internal identifiers (CT_EGRESS_PATTERNS, read from the install-compiled org-egress.json sidecar; portable-subset regex only). Covers the SearXNG MCP surface so secure-deep-research's sensitive-topic path (routed through self-hosted SearXNG for privacy) is egress-scanned too (a no-op when no SearXNG server is configured). Pure bash + jq, so it keeps guarding the web surface even if bun is broken (runtime-diversity hedge), and a web-only install needs no bun.",
       "hook": "hooks/leak-guard.sh",
-      "matcher": "WebSearch|WebFetch",
+      "matcher": "WebSearch|WebFetch|mcp__searxng__",
       "event": "PreToolUse",
       "usesConfig": true
     },

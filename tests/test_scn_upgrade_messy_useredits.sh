@@ -112,14 +112,14 @@ assert_ok "user's own hook registration kept" \
 
 # (d) the kit's CANONICAL leak-guard registration is present after the upgrade —
 #     the kit re-adds its proper matcher so the guard actually fires. leak-guard is
-#     now WEB-only: it ships under "WebSearch|WebFetch" and must NOT be on "Bash"
-#     (Bash egress is command-guard's surface).
-assert_ok "kit canonical leak-guard registration re-added (WebSearch|WebFetch, NOT Bash)" \
+#     WEB-only: it ships under "WebSearch|WebFetch|mcp__searxng__" (web tools + SearXNG
+#     MCP) and must NOT be on "Bash" (Bash egress is command-guard's surface).
+assert_ok "kit canonical leak-guard registration re-added (web-egress matcher, NOT Bash)" \
   bash -c "jq -e '
      [ .hooks.PreToolUse[]
        | select((.hooks // [] | map(.command) | any(endswith(\"/leak-guard.sh\"))))
        | .matcher ] as \$m
-     | (\$m | index(\"WebSearch|WebFetch\") != null) and (\$m | index(\"Bash\") == null)
+     | (\$m | index(\"WebSearch|WebFetch|mcp__searxng__\") != null) and (\$m | index(\"Bash\") == null)
    ' '$S' >/dev/null"
 
 # No maintainer-only \$comment keys ever leak into the user's settings.

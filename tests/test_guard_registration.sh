@@ -14,11 +14,12 @@ PROFILE="$SB/.claude-aka"
 SHELL=/bin/bash HOME="$SB" bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$SB/log" 2>&1
 S="$PROFILE/settings.json"
 
-# leak-guard appears under exactly ONE registration: WebSearch|WebFetch (web-only).
+# leak-guard appears under exactly ONE registration: the web-egress matcher
+# WebSearch|WebFetch|mcp__searxng__ (web tools + SearXNG MCP; web-only, NOT Bash).
 assert_ok "leak-guard registered exactly once" \
   bash -c "jq -e '[.hooks.PreToolUse[] | select(.hooks[].command | endswith(\"/leak-guard.sh\"))] | length == 1' '$S' >/dev/null"
-assert_ok "leak-guard registered under WebSearch|WebFetch only (NOT Bash)" \
-  bash -c "jq -e '[.hooks.PreToolUse[] | select(.hooks[].command | endswith(\"/leak-guard.sh\")) | .matcher] | (index(\"WebSearch|WebFetch\")!=null) and (index(\"Bash\")==null)' '$S' >/dev/null"
+assert_ok "leak-guard registered under the web-egress matcher incl. SearXNG (NOT Bash)" \
+  bash -c "jq -e '[.hooks.PreToolUse[] | select(.hooks[].command | endswith(\"/leak-guard.sh\")) | .matcher] | (index(\"WebSearch|WebFetch|mcp__searxng__\")!=null) and (index(\"Bash\")==null)' '$S' >/dev/null"
 # Bash egress is command-guard's surface now — leak-guard must not appear on Bash.
 assert_ok "no leak-guard registration on the Bash matcher (consolidated into command-guard)" \
   bash -c "jq -e '[.hooks.PreToolUse[] | select(.matcher==\"Bash\") | .hooks[].command | select(endswith(\"/leak-guard.sh\"))] | length == 0' '$S' >/dev/null"
