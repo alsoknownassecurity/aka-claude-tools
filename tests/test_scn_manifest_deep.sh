@@ -112,13 +112,10 @@ while IFS= read -r id; do
     if jq -e --arg b "$hook_b" '[.. | objects | (.command? // "")] | any(contains($b))' "$S" >/dev/null 2>&1; then
       pass "[$id] hook registered in settings after install"
     else
-      # command-guard self-skips if bun is absent; tolerate that one case.
-      req="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .requires // ""' "$ADDITIONS")"
-      if [ -n "$req" ] && ! command -v "$req" >/dev/null 2>&1; then
-        pass "[$id] hook not registered (requires '$req', absent) — tolerated"
-      else
-        fail "[$id] hook NOT registered in settings after install" "expected command containing $hook_b"
-      fi
+      # Every shipped hook addition must register. (The old `.requires`/soft-skip
+      # tolerance is gone: bun is now a hard dependency — a bun-less host aborts the
+      # install before this point, so an unregistered hook here is a real failure.)
+      fail "[$id] hook NOT registered in settings after install" "expected command containing $hook_b"
     fi
   fi
   # statusLine present.
