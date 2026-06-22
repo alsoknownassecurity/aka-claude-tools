@@ -504,3 +504,62 @@ legacy_prune_regs() {
       | (if (.hooks // {}) == {} then del(.hooks) else . end)
     else . end'
 }
+
+# ── superseded kit-MATCHER migration ──────────────────────────────────────────
+# AKA_SUPERSEDED_MATCHERS — kit hooks whose MATCHER (not file name) changed across kit
+# versions. When the kit BROADENS a hook's matcher (e.g. leak-guard gained the SearXNG MCP
+# surface: "WebSearch|WebFetch" → "WebSearch|WebFetch|mcp__searxng__", #59), the hook FILE is
+# unchanged — so the rename cleanup (AKA_LEGACY_HOOKS) doesn't apply — and the matcher-gated
+# dedup (prune_hook_regs_resolving) reads the OLD-matcher reg as a deliberate user tweak and
+# keeps it, leaving the guard registered under BOTH matchers (double-firing on the web tools).
+# Listing the SUPERSEDED matcher here lets an upgrade prune that stale KIT reg before the merge
+# re-adds the current one. A genuine USER matcher tweak — any matcher NOT in this list — is
+# left untouched (so re-scoping leak-guard to just "WebFetch" still survives).
+#
+# INVARIANT (security-safe): only list a prior matcher when the current kit matcher is a
+# SUPERSET of it (a broadening). Then pruning the stale reg can only ADD matched tools on the
+# re-added current reg, never REDUCE a guard's coverage — so even in the one ambiguous case (a
+# user who independently typed the EXACT old kit default, indistinguishable from a stale kit
+# reg) the upgrade gives strictly more egress scanning, never less. The invariant is ENFORCED
+# by test_scn_upgrade_matcher_migration.sh (every entry must be subsumed by the live
+# additions.json matcher for its hook). Format: JSON array of {hook (basename), matcher
+# (the superseded string)}.
+AKA_SUPERSEDED_MATCHERS='[{"hook":"leak-guard.sh","matcher":"WebSearch|WebFetch"}]'
+
+# build_superseded_add <add-json> → a SYNTHETIC add (JSON on stdout, or {} if none apply)
+# Maps the kit's real registrations (<add-json> — exactly what is registered THIS run) onto
+# the SUPERSEDED matcher(s): for each kit hook whose matcher changed, emit a clone of its add
+# group carrying the OLD matcher + the SAME command the kit writes. Feeding this synthetic add
+# to prune_hook_regs_resolving prunes the stale OLD-matcher reg using that pruner's strong,
+# proven logic — full $HOME / $CLAUDE_CONFIG_DIR / ~ / both-quote-form normalization, FULL-
+# command equality (so an AUGMENTED user invocation like `bash …/leak-guard.sh` under the old
+# matcher is NOT a match and survives), per-hook, matcher-gated. Reusing that pruner (rather
+# than a parallel weaker owner-stamp) is why a stale reg spelled with $CLAUDE_CONFIG_DIR or
+# double quotes is still caught, and why only the kit's exact canonical command is pruned.
+# A kit hook's command is unchanged across the matcher broadening, so the synthetic command
+# matches the stale reg after normalization. Hooks are identified by the add command containing
+# /hooks/<hook> (the add is the kit's own freshly-built, canonical registration).
+# CONSERVATIVE BOUNDARY: because the prune is full-command-equality against the kit's CURRENT
+# command, this migrates a MATCHER-only change. If a future version changed BOTH the matcher AND
+# the command/file name, the stale reg keeps its old command, equality fails, and it is NOT
+# pruned here — that is the file-rename path's job (AKA_LEGACY_HOOKS), so add a legacy entry too.
+build_superseded_add() {
+  local add="$1"
+  jq -nc --argjson add "$add" --argjson sup "$AKA_SUPERSEDED_MATCHERS" \
+    "$_AKA_LEGACY_JQ_DEFS"'
+    # (event, superseded-matcher, kit-hooks-array) for each add group matching a superseded hook
+    [ ($add.hooks // {}) | to_entries[] | .key as $e | (.value // [])[]?
+      | select(type=="object" and ((.hooks|type)=="array"))
+      | . as $grp
+      | $sup[] as $s
+      # contains (not endswith): the add command may carry an interpreter prefix and/or
+      # trailing args (`bun .../x.ts --flag`), so match on the hook path appearing anywhere.
+      # This is only a SELECTOR — the full-command equality in prune_hook_regs_resolving is
+      # the actual gate, so a loose selection can only MISS, never over-prune a USER reg: the
+      # synthetic add is cloned from $add (the kit OWN registration this run), so it carries
+      # only KIT commands — a user reg, never present in $add, can never be synthesized/pruned.
+      | select( ($grp.hooks // []) | any( (type=="object") and (_cmd_str | contains("/hooks/" + $s.hook)) ) )
+      | { e:$e, m:$s.matcher, hooks:$grp.hooks } ]
+    | reduce .[] as $x ({}; .[$x.e] += [ { matcher:$x.m, hooks:$x.hooks } ])
+    | if (length==0) then {} else { hooks: . } end'
+}

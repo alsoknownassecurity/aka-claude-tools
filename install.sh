@@ -216,7 +216,10 @@ prune_hook_regs_resolving() {
                      # event+matcher — a sibling user hook in the SAME object is kept.
                      ( map( if type=="object" then
                               (.matcher // "") as $m
-                              | .hooks = ( (.hooks // []) | map( select(
+                              # guard a non-array .hooks (a string/object scalar) → []: jq
+                              # map() over a non-array aborts ("Cannot iterate over string")
+                              # under set -euo pipefail. (.hooks // []) only catches null.
+                              | .hooks = ( (if (.hooks|type)=="array" then .hooks else [] end) | map( select(
                                   ( (type=="object")
                                     and ( (.command | ncmd) as $c
                                           | ($kit | any(.e==$ev and .m==$m and .c==$c)) )
@@ -1030,6 +1033,23 @@ apply_additions() {
     for _lh in "${_legacy_files_to_delete[@]}"; do cp "$_lh" "$_bdir/"; done
     [ "$existing" != "{}" ] && existing="$(printf '%s' "$existing" | legacy_prune_regs "$config_dir")"
     ok "Cleaning up ${#_legacy_files_to_delete[@]} legacy pre-marker hook(s) — backed up to ${_bdir/#$HOME/~}"
+  fi
+
+  # 4d-pre3b. Superseded kit-MATCHER migration. When the kit BROADENS a hook's matcher
+  # across versions (leak-guard "WebSearch|WebFetch" → "…|mcp__searxng__", #59), the hook
+  # FILE is unchanged (so 4d-pre2/4d-pre3 don't apply) and the matcher-gated dedup below
+  # reads the stale OLD-matcher reg as a user tweak and keeps it — leaving the guard under
+  # BOTH matchers (double-firing). Build a SYNTHETIC add that carries the kit's current
+  # command(s) under the SUPERSEDED matcher(s) and run it through the SAME resolved-target
+  # pruner used below — so the stale reg is removed with the proven full-normalization,
+  # full-command-equality logic (an augmented user invocation, a different matcher, or a
+  # same-named hook elsewhere is preserved), then the merge re-adds the current reg.
+  # Security-safe: the kit only ever broadens, so the re-added reg can only ADD coverage
+  # (see the AKA_SUPERSEDED_MATCHERS invariant). No-op on a fresh install (existing == {}).
+  if [ "$existing" != "{}" ] && [ "$add" != "{}" ]; then
+    local _superseded_add; _superseded_add="$(build_superseded_add "$add")"
+    [ "$_superseded_add" != "{}" ] && \
+      existing="$(printf '%s' "$existing" | prune_hook_regs_resolving "$config_dir" "$_superseded_add")"
   fi
 
   # 4d-pre4. De-dup kit hook registrations by RESOLVED TARGET. The union (merge_settings)
