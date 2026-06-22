@@ -850,6 +850,31 @@ apply_additions() {
     done
   fi
 
+  # 4d-pre3. Legacy pre-marker hook cleanup — the hook-rename fold-in. The OLDEST
+  # kit hooks (AKA_LEGACY_HOOKS) predate the managed marker, so 4d-pre2 can't recognise
+  # them; left alone, a re-install registers the RENAMED guard ALONGSIDE the still-present
+  # old one and BOTH fire (a stale-path egress guard double-running with its replacement).
+  # Remove them here precisely — owner-stamped via the SHARED matcher in common.sh that
+  # hook-rename.sh also uses (one code path, detection+prune can't disagree), so a
+  # user who never ran that script still upgrades cleanly. FAIL-OPEN-SAFE ordering: back up
+  # first, prune the registrations from `existing` so the SINGLE atomic merge write below
+  # drops them, and delete the hook FILES only AFTER that write succeeds (see below the
+  # write) — so an abort mid-way never leaves the profile with fewer guards than it began.
+  local _legacy_files_to_delete=() _lh
+  for _lh in $AKA_LEGACY_HOOKS; do
+    [ -f "$config_dir/hooks/$_lh" ] || continue
+    legacy_hook_is_kit_registered "$config_dir/settings.json" "$config_dir" "$_lh" || continue
+    _legacy_files_to_delete+=("$config_dir/hooks/$_lh")
+  done
+  if [ "${#_legacy_files_to_delete[@]}" -gt 0 ]; then
+    local _bdir="$config_dir/backups/legacy-hooks-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$_bdir"
+    [ -f "$config_dir/settings.json" ] && cp "$config_dir/settings.json" "$_bdir/settings.json"
+    for _lh in "${_legacy_files_to_delete[@]}"; do cp "$_lh" "$_bdir/"; done
+    [ "$existing" != "{}" ] && existing="$(printf '%s' "$existing" | legacy_prune_regs "$config_dir")"
+    ok "Cleaning up ${#_legacy_files_to_delete[@]} legacy pre-marker hook(s) — backed up to ${_bdir/#$HOME/~}"
+  fi
+
   # Reconcile kit-managed permission rules first: a plain merge only UNIONS, so it
   # can add new denies/allows but never drop ones the kit has retired. This shows
   # the engineer the per-rule diff and lets them choose (default: adopt this
@@ -865,6 +890,20 @@ apply_additions() {
     merge_settings "$existing" "$add" > "$config_dir/settings.json.tmp"
     mv "$config_dir/settings.json.tmp" "$config_dir/settings.json"
     ok "Wrote $config_dir/settings.json"
+  fi
+
+  # 4d-pre3 (continued). Now that the new settings.json — with the legacy registrations
+  # pruned — is safely on disk, delete the legacy hook FILES. Doing it AFTER the write is
+  # what makes the cleanup fail-open-safe: a failure before this point leaves both the old
+  # files and (the unwritten) old registrations intact, never a half-cleaned profile.
+  if [ "${#_legacy_files_to_delete[@]}" -gt 0 ]; then
+    for _lh in "${_legacy_files_to_delete[@]}"; do
+      rm -f "$_lh"; _lh="$(basename "$_lh")"; ok "Removed legacy hook '$_lh'"
+      case "$_lh" in
+        command-guard.ts)      is_selected command-guard "$_sel_ids" || warn "  ↳ command-guard (the Bash-egress replacement) is not selected — Bash egress is now unguarded. Re-run with command-guard to restore it." ;;
+        leak-guard.sh) is_selected leak-guard "$_sel_ids"    || warn "  ↳ leak-guard (the web-egress replacement) is not selected — web egress is now unguarded. Re-run with leak-guard to restore it." ;;
+      esac
+    done
   fi
 
   # Dangerous-flag heads-up — shown on EVERY path (incl. --defaults/non-interactive),

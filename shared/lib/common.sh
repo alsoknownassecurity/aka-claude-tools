@@ -316,3 +316,74 @@ alias_target_elsewhere() {
   t="${t/#\~/$HOME}"; t="${t//\$HOME/$HOME}"; t="${t//\$\{HOME\}/$HOME}"
   printf '%s\n' "$t"
 }
+
+# ── legacy pre-marker hook migration (shared by install.sh + hook-rename.sh) ──
+# The three kit hooks that predate the managed-marker, with their current replacements.
+# Because they carry no marker, install.sh's marker-based self-clean (4d-pre2) can't
+# recognize them — so without this, a re-install/upgrade leaves BOTH the old and the
+# renamed guard registered (double-firing). This shared logic removes them precisely
+# (owner-stamped), and is the SINGLE code path both the installer fold-in and the
+# throwaway migration script use, so detection and pruning can never disagree.
+#   command-guard.ts       -> command-guard.ts   (Bash egress)
+#   leak-guard.sh  -> leak-guard.sh        (web egress)
+#   rtk-safe.hook.sh -> rtk-safe.sh
+AKA_LEGACY_HOOKS="command-guard.ts leak-guard.sh rtk-safe.hook.sh"
+
+# Shared jq predicate. A registration "belongs to THIS profile" iff its command,
+# after normalizing $HOME / ${HOME} / a leading ~ to the real home and stripping the
+# single-quotes the installer wraps the dir in, resolves to <cfg>/hooks/<name>. The
+# normalization is LITERAL split/join inside jq (NOT a regex, NOT shell `eval` of the
+# stored command), so quoting/escapes in the command can't misfire — and it stays
+# anchored to this profile's hooks dir (the owner-stamp), so a same-named hook under a
+# DIFFERENT path is never mistaken for the kit's. Matching by the EXPANDED absolute path
+# only (the prior behaviour) silently missed registrations written with a literal $HOME,
+# which is what left old + new guards both firing on real profiles. ONE predicate,
+# reused by both detection and pruning below.
+_AKA_LEGACY_JQ_DEFS='
+  def _repl($a;$b): if $a=="" then . else split($a)|join($b) end;
+  def _norm($home): _repl("${HOME}";$home)|_repl("$HOME";$home)
+    | (if startswith("~/") then $home + .[1:] else . end)
+    | _repl("\u0027";"") | sub("[[:space:]]+$";"");
+  def _cmd_str: (.command // "")
+    | (if type=="array" then (map(strings)|join(" ")) elif type=="string" then . else "" end);
+  def _reg_cmds: [ (.hooks // {}) | to_entries[] | .value[]? | (.hooks // [])[]? | _cmd_str ];
+  def _is_kit_reg($home;$cfg;$name):
+    _reg_cmds | any(.[]; _norm($home) | endswith($cfg + "/hooks/" + $name));
+'
+
+# legacy_hook_is_kit_registered <settings-file> <cfg> <name> → exit 0 iff settings
+# registers <name> by a command resolving to THIS profile's hooks dir (the owner-stamp).
+legacy_hook_is_kit_registered() {
+  local s="$1" cfg="$2" name="$3"
+  [ -f "$s" ] || return 1
+  jq -e --arg home "$HOME" --arg cfg "$cfg" --arg name "$name" \
+    "$_AKA_LEGACY_JQ_DEFS"' _is_kit_reg($home;$cfg;$name)' "$s" >/dev/null 2>&1
+}
+
+# legacy_prune_regs <cfg>  (settings JSON on stdin → pruned JSON on stdout)
+# Drop every registration whose command resolves to <cfg>/hooks/<legacy-name> for ANY
+# legacy hook, then drop events left empty. Uses the SAME normalized predicate as
+# detection (no split-brain).
+legacy_prune_regs() {
+  local cfg="$1" names_json
+  # Build the names array in jq from the space-separated list — NOT via unquoted shell
+  # word-splitting, which differs between bash and zsh (zsh doesn't split unquoted vars).
+  names_json="$(jq -nc --arg s "$AKA_LEGACY_HOOKS" '$s | split(" ") | map(select(length>0))')"
+  jq --arg home "$HOME" --arg cfg "$cfg" --argjson names "$names_json" \
+    "$_AKA_LEGACY_JQ_DEFS"'
+    def _is_legacy: (_cmd_str | _norm($home)) as $c
+      | ($names | any(. as $n | $c | endswith($cfg + "/hooks/" + $n)));
+    if (.hooks|type)=="object" then
+      # Prune at the INNER-hook level: drop only the matching {type,command} entries,
+      # keeping any user hooks grouped under the SAME matcher; then drop a matcher group
+      # only once its hooks array is empty, and an event only once it has no groups left.
+      (.hooks |= ( to_entries
+        | map(.value |= ( map(if (type=="object") and ((.hooks|type)=="array")
+                              then .hooks |= map(select(_is_legacy | not))
+                              else . end)
+              | map(select((type!="object") or ((.hooks|type)!="array") or ((.hooks|length) > 0))) ))
+        | map(select((.value|type)=="array" and (.value|length) > 0))
+        | from_entries ))
+      | (if (.hooks // {}) == {} then del(.hooks) else . end)
+    else . end'
+}
