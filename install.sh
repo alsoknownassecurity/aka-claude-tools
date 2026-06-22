@@ -152,17 +152,22 @@ prune_hook_regs() {
     else . end'
 }
 
-# Drop the kit's .statusLine (command references basename $1) on deselect — and if a
+# Drop the kit's .statusLine on deselect — identified by its command END-ANCHORED on
+# $1 (the kit always writes "<cfg>/hooks/statusline.sh", no trailing args) — and if a
 # user's own prior statusLine was stashed when the addition was installed (see the
 # stash step in apply_additions), RESTORE it verbatim instead of leaving none. The
 # statusLine is a singleton object the merge overwrites, so stash+restore is the only
 # way to deselect 'statusline' without losing a value the user had before.
+# END-anchored (endswith), NOT a substring contains: a user command that merely MENTIONS
+# the path mid-string (`echo .../statusline.sh && mine`) or has a suffix
+# (`.../statusline.sh-wrapper`) is NOT the kit's and must not be touched. The matcher in
+# the stash guard (apply_additions) uses the SAME endswith so stash and restore can't disagree.
 prune_statusline() {
   jq --arg b "$1" '
     if (.statusLine|type)=="object"
        and ((.statusLine.command) as $c
             | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-            | contains($b))
+            | endswith($b))
     then (if has("_aka_prior_statusLine")
           then .statusLine = ._aka_prior_statusLine | del(._aka_prior_statusLine)
           else del(.statusLine) end)
@@ -219,9 +224,9 @@ prune_addition_from_settings() {
   sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
-  # Path-anchored ("/hooks/statusline.sh"), not just the basename, so a user statusLine
-  # that merely happens to be named statusline.sh in some OTHER dir is never matched as
-  # the kit's (consistent with the stash/restore precision in apply_additions).
+  # End-anchored on "/hooks/statusline.sh" (the kit's command tail), not the bare
+  # basename, so a user statusLine named statusline.sh in some OTHER dir, or a suffixed
+  # path, is never matched as the kit's (consistent with the stash guard in apply_additions).
   [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "/$sline")"
   # The statusline addition can pin a weather location into .preferences.location at
   # install; prune_statusline only drops the statusLine command, so remove that pinned
@@ -838,14 +843,16 @@ apply_additions() {
   # plain install would silently lose a statusLine the user already had. Stash a NON-kit
   # prior value once — prune_statusline restores it verbatim if the addition is later
   # deselected. Idempotency guard: only stash when the current statusLine is the user's
-  # (command does NOT reference our statusline.sh) AND nothing is stashed yet, so a re-apply
-  # can never overwrite the saved original with the kit value.
+  # (command does NOT END with our /hooks/statusline.sh) AND nothing is stashed yet, so a
+  # re-apply can never overwrite the saved original with the kit value. The endswith here
+  # MUST match prune_statusline's anchor exactly — substring contains would mis-stash a
+  # user command that merely mentions the path mid-string or has a suffix.
   if is_selected statusline "$_sel_ids" && [ "$existing" != "{}" ]; then
     if printf '%s' "$existing" | jq -e '
           (.statusLine|type)=="object"
           and ((.statusLine.command) as $c
                | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-               | contains("/hooks/statusline.sh") | not)
+               | endswith("/hooks/statusline.sh") | not)
           and (has("_aka_prior_statusLine")|not)' >/dev/null 2>&1; then
       warn "Replacing your existing statusLine with the kit's — your previous one is saved and restored if you later deselect 'statusline'."
       existing="$(printf '%s' "$existing" | jq '._aka_prior_statusLine = .statusLine')"

@@ -35,6 +35,19 @@ assert_ok   "H1: prior statusLine RESTORED on deselect" \
 assert_ok   "H1: stash key removed after restore" \
   bash -c "jq -e 'has(\"_aka_prior_statusLine\") | not' '$P/settings.json' >/dev/null"
 
+# ── H1 (anchoring): a NON-kit statusLine that only RESEMBLES the kit path — a suffix
+#    (.../statusline.sh-wrapper) or a mid-string mention — must NOT be mistaken for the
+#    kit's. End-anchored (endswith), so it is stashed verbatim on install and restored on
+#    deselect; a substring `contains` would mis-classify it and silently lose it. ──
+SB="$(sandbox)"; P="$SB/.claude-aka"; mkdir -p "$P"
+printf '%s\n' '{"statusLine":{"type":"command","command":"/opt/custom/hooks/statusline.sh-wrapper"}}' > "$P/settings.json"
+HOME="$SB" CT_CONFIG_DIR="$P" CT_ADDITIONS="statusline" bash "$REPO_ROOT/install.sh" --apply >/dev/null 2>&1
+assert_ok   "H1-anchor: a suffix-named (...statusline.sh-wrapper) user statusLine is stashed, not mistaken for the kit's" \
+  bash -c "jq -e '._aka_prior_statusLine.command == \"/opt/custom/hooks/statusline.sh-wrapper\"' '$P/settings.json' >/dev/null"
+HOME="$SB" CT_CONFIG_DIR="$P" CT_ADDITIONS="" bash "$REPO_ROOT/install.sh" --apply >/dev/null 2>&1
+assert_ok   "H1-anchor: the suffix-named user statusLine is RESTORED verbatim on deselect" \
+  bash -c "jq -e '.statusLine.command == \"/opt/custom/hooks/statusline.sh-wrapper\"' '$P/settings.json' >/dev/null"
+
 # ── H2 + C2: legacy pre-marker hooks ($HOME-literal regs) cleaned on upgrade ──
 SB="$(sandbox)"; P="$SB/.claude-aka"; mkdir -p "$P/hooks"
 echo "old web egress" > "$P/hooks/leak-guard.sh"
