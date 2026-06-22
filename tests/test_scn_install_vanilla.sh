@@ -80,12 +80,12 @@ assert_file "kit hook placed: leak-guard.sh" "$PROFILE/hooks/leak-guard.sh"
 assert_ok   "leak-guard registered in settings.PreToolUse" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
 assert_ok   "statusLine wired in settings" \
-  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.sh\")' '$S' >/dev/null"
+  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"
 
 # ── selected kit artifacts placed ────────────────────────────────────────────
 assert_file "command placed: wrap-up.md"  "$PROFILE/commands/wrap-up.md"
 assert_file "skill placed: shell-audit"   "$PROFILE/skills/shell-audit"
-assert_file "statusline hook placed"      "$PROFILE/hooks/statusline.sh"
+assert_file "statusline hook placed"      "$PROFILE/hooks/statusline.ts"
 
 # ── no maintainer-only $comment leak ─────────────────────────────────────────
 assert_ok   "no \$comment keys in layered settings" \

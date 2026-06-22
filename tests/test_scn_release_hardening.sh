@@ -26,7 +26,7 @@ SB="$(sandbox)"; P="$SB/.claude-aka"; mkdir -p "$P"
 printf '%s\n' '{"statusLine":{"type":"command","command":"myframework/my-statusline.sh"}}' > "$P/settings.json"
 HOME="$SB" CT_CONFIG_DIR="$P" CT_ADDITIONS="statusline" bash "$REPO_ROOT/install.sh" --apply >/dev/null 2>&1
 assert_ok   "H1: kit statusLine installed" \
-  bash -c "jq -e '.statusLine.command | endswith(\"/hooks/statusline.sh\")' '$P/settings.json' >/dev/null"
+  bash -c "jq -e '.statusLine.command | endswith(\"/hooks/statusline.ts\")' '$P/settings.json' >/dev/null"
 assert_ok   "H1: user's prior statusLine stashed" \
   bash -c "jq -e '._aka_prior_statusLine.command == \"myframework/my-statusline.sh\"' '$P/settings.json' >/dev/null"
 HOME="$SB" CT_CONFIG_DIR="$P" CT_ADDITIONS="" bash "$REPO_ROOT/install.sh" --apply >/dev/null 2>&1

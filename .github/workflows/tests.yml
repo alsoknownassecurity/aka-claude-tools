@@ -10,13 +10,21 @@ permissions:
 
 jobs:
   flow:
-    name: pipeline flow tests
-    runs-on: ubuntu-latest
+    name: pipeline flow tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # Run on BOTH GNU (ubuntu) and BSD (macos) userland. The hooks are now .ts
+      # (statusline's BSD/GNU `date`/`stat` forks are gone — it uses Date/Intl), so the
+      # macOS leg is the way platform drift in the Intl/fetch/execFileSync paths surfaces.
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      # bun is a real dependency of the command-guard hook (a .ts file): install.sh
-      # only deploys+registers it when bun is present, so CI needs bun to exercise
-      # the full recommended install the flow suite asserts.
+      # bun is a real dependency of the command-guard + statusline hooks (.ts files):
+      # install.sh only deploys+registers command-guard when bun is present and ABORTS if
+      # statusline is selected without it, so CI needs bun to exercise the full recommended
+      # install the flow suite asserts.
       - uses: oven-sh/setup-bun@v2
       - name: tool versions
         run: |
@@ -24,6 +32,13 @@ jobs:
           jq --version
           git --version
           bun --version
+      - name: typecheck the bun hooks (command-guard.ts, statusline.ts)
+        # Static analysis the all-bash suite can't provide. tsconfig.json restricts the
+        # program to config/hooks/*.ts + tests/*.test.ts; @types/bun is a dev-only dep
+        # (the hooks themselves run with zero dependencies).
+        run: |
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
       - name: run the flow suite
         # Sandboxed (fake $HOME, throwaway clones) — touches no real profile.
         # Exercises: install.sh forward deploy + path remap, additions.json

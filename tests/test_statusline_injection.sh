@@ -1,90 +1,102 @@
 #!/usr/bin/env bash
-# test_statusline_injection.sh — statusline.sh builds per-run "fragments" that it
-# SOURCES. Values derived from the git ref + the repo dir/remote name (branch, repo)
-# and the weather cache MUST be shell-quoted before being written into those sourced
-# fragments, or a crafted branch / maliciously-named clone directory injects code on
-# render (CWE-78). Regression net for the printf %q fix. This net directly exercises
-# the two attacker-reachable sinks — the repo-dir basename and the git branch name —
-# from inside a crafted repo; the weather/usage fragments are quoted by the same
-# printf %q construct (verified by the fix), not re-exercised here.
+# test_statusline_injection.sh — the statusline is now config/hooks/statusline.ts (bun),
+# a behaviour-preserving port of the old statusline.sh. The original RCE class the .sh
+# version defended against — values derived from the git ref / repo dir / weather cache
+# being SOURCED as shell fragments (CWE-78), guarded with printf %q — NO LONGER EXISTS:
+# the .ts version uses typed JSON.parse + argv-array subprocesses and never `source`s or
+# `eval`s anything. This test is repurposed as the regression net that PROVES that: feed
+# the port crafted branch / dir / session_name values full of shell metacharacters and
+# assert (a) it exits 0, (b) the crafted value still renders, (c) NO sentinel side-effect
+# file is created (nothing was evaluated). If a future edit reintroduces a shell eval, the
+# sentinel fires and this fails.
 #
-# statusline runs its git block in its PROCESS cwd (not the JSON current_dir), so —
-# like Claude Code launching it inside the project dir, and like the real attack — we
-# run it FROM INSIDE the crafted repo. A successful injection drops a relative marker
-# in that cwd.
+# The port runs its git subprocesses with cwd = the JSON current_dir (explicit, no longer
+# the implicit process cwd), so we point current_dir at the crafted repo/dir directly.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "test_statusline_injection:"
 
-SL="$REPO_ROOT/config/hooks/statusline.sh"
+SL="$REPO_ROOT/config/hooks/statusline.ts"
 SB="$(sandbox)"
-export HOME="$SB"          # statusline caches under HOME — keep it sandboxed
+export HOME="$SB" TMPDIR="$SB"          # cache dir derives from HOME/TMPDIR — keep sandboxed
+unset CLAUDE_CONFIG_DIR XDG_RUNTIME_DIR
+CFG="$SB/cfg"; mkdir -p "$CFG"
+export CLAUDE_CONFIG_DIR="$CFG"
+# Pre-seed a fresh PINNED location cache with NO lat/lon so the render fires no network
+# (pinned → no IP lookup; no coords → no weather fetch). Keeps the test offline + fast.
+KEY="$(printf '%s' "$CFG" | tr -c 'A-Za-z0-9' '_')"
+CACHE="$SB/aka-claude-tools-${USER:-anon}"; mkdir -p "$CACHE"; chmod 700 "$CACHE"
+printf '%s\n' '{"country_code":"US","region_code":"NY","city":"NYC","success":true,"pinned":true}' > "$CACHE/location-$KEY.json"
 
-sl_input(){ printf '{"workspace":{"current_dir":%s},"model":{"display_name":"Opus"},"session_id":"x"}' \
-  "$(printf '%s' "$1" | jq -R .)"; }
-# Run statusline FROM inside repo dir $1 (cwd = the repo, as the harness does).
-run_in_repo(){ ( cd "$1" && printf '%s' "$(sl_input "$1")" | bash "$SL" ); }
+# Normal-width render (shows dir/branch on the card + session on the ambient line). Native
+# rate_limits supplied so the usage segment needs no network either.
+sl_input(){ # $1 = current_dir, $2 = session_name
+  jq -cn --arg d "$1" --arg s "$2" \
+    '{workspace:{current_dir:$d},model:{id:"claude-opus-4-8"},context_window:{used_percentage:5},
+      session_name:$s, rate_limits:{five_hour:{used_percentage:1},seven_day:{used_percentage:1}}}'
+}
+run_sl(){ # $1 = current_dir, $2 = session_name ; runs FROM the sandbox so a stray sentinel lands here
+  ( cd "$SB" && printf '%s' "$(sl_input "$1" "$2")" | COLUMNS=120 bun "$SL" ); }
 
-# (1) RCE: a repo directory whose basename breaks out of the raw single-quoted
-#     assignment and runs a command must NOT execute on render. (A space is fine inside
-#     the SOURCED fragment — only git branch names forbid spaces, not dir names.)
-EVIL="$SB/z';touch INJECTED;'"
-mkdir -p "$EVIL" && ( cd "$EVIL" && git init -q && git commit -q --allow-empty -m i ) 2>/dev/null
-rm -f "$EVIL/INJECTED"
-out="$(run_in_repo "$EVIL" 2>/dev/null)"; rc=$?
-if [ -e "$EVIL/INJECTED" ]; then
-  fail "crafted repo dir name does NOT inject code (RCE blocked)" "marker created — injection fired"
+# ── (1) crafted DIRECTORY name (non-git) — basename flows into the rendered card ──
+EVIL_DIR="$SB/proj\$(touch DIR_INJECTED)';touch DIR_INJECTED;'"
+mkdir -p "$EVIL_DIR"
+rm -f "$SB/DIR_INJECTED"
+out="$(run_sl "$EVIL_DIR" "" 2>/dev/null)"; rc=$?
+if [ -e "$SB/DIR_INJECTED" ]; then
+  fail "crafted dir name does NOT inject (no shell eval)" "sentinel created — injection fired"
 elif [ "$rc" -ne 0 ] || [ -z "$out" ]; then
-  # A clean exit + a rendered line proves statusline ran THROUGH the sourced fragment;
-  # without this, an early abort before the sink would make marker-absence a false pass.
-  fail "crafted repo dir name does NOT inject code (RCE blocked)" "statusline did not render the sink (rc=$rc, empty=$([ -z "$out" ] && echo yes || echo no)) — marker-absence would be a false pass"
+  fail "crafted dir name does NOT inject (no shell eval)" "statusline did not render (rc=$rc, empty=$([ -z "$out" ] && echo yes || echo no))"
 else
-  pass "crafted repo dir name does NOT inject code (RCE blocked)"
+  pass "crafted dir name does NOT inject (no shell eval)"
 fi
-
-# (2) A LEGITIMATE repo name with an apostrophe (e.g. O'Brien) must render without a
-#     fragment source error — the old raw single-quoting broke on this.
-OBR="$SB/O'Brien-app"
-mkdir -p "$OBR" && ( cd "$OBR" && git init -q && git commit -q --allow-empty -m i ) 2>/dev/null
-err="$(run_in_repo "$OBR" 2>&1 >/dev/null)"
-case "$err" in
-  *git.sh*|*"unexpected EOF"*|*"syntax error"*)
-    fail "apostrophe repo name renders without a fragment source error" "got: $err" ;;
-  *) pass "apostrophe repo name renders without a fragment source error" ;;
+# The crafted basename still renders verbatim (it is text, not code).
+case "$out" in
+  *"touch DIR_INJECTED"*) pass "crafted dir basename is rendered as text" ;;
+  *) fail "crafted dir basename is rendered as text" "not found in output" ;;
 esac
-out="$(run_in_repo "$OBR" 2>/dev/null)"
-[ -n "$out" ] \
-  && pass "statusline still renders a non-empty line on the apostrophe repo" \
-  || fail "statusline still renders a non-empty line on the apostrophe repo" "empty output"
 
-# (3) RCE via a crafted BRANCH name. The branch flows into the same SOURCED git
-#     fragment (branch='...') as the repo name. git refnames FORBID spaces but ALLOW '
-#     and ; — so the payload uses a space-free redirection (>BR_INJECTED), not `touch`,
-#     to break out of the single-quoted assignment. (Verified: this exact name fires on
-#     the pre-fix code, so the test has teeth.)
-BRH="$SB/branch-host"
+# ── (2) crafted BRANCH name — git refnames forbid spaces but ALLOW ' ; > ─────────
+# The payload uses a space-free redirection (>BR_INJECTED), not `touch X` (a space is an
+# invalid refname char), so the branch is creatable AND would write the sentinel if eval'd.
+BRH="$SB/branch-host"; mkdir -p "$BRH"
 EVIL_BR="x';>BR_INJECTED;'y"
-# Inline git identity so the commit succeeds on ANY host: CI redirects HOME to the
-# sandbox (no git identity), and without this the commit fails, the branch stays unborn,
-# and HEAD reads back as 'HEAD' — making the test vacuously "pass". checkout -b then
-# creates the payload branch.
-mkdir -p "$BRH" && ( cd "$BRH" && git init -q \
+( cd "$BRH" && git init -q \
   && git -c user.email=t@t.test -c user.name=test commit -q --allow-empty -m i \
   && git checkout -q -b "$EVIL_BR" ) 2>/dev/null
-# Anti-vacuous guard: if git ever rejects the payload (or the commit failed) HEAD won't
-# be the payload branch, and the no-injection check would pass for the WRONG reason.
 got_br="$(cd "$BRH" && git symbolic-ref --short -q HEAD 2>/dev/null || true)"
 if [ "$got_br" != "$EVIL_BR" ]; then
-  fail "crafted branch name does NOT inject code (RCE blocked)" "test setup vacuous: branch is '${got_br:-<unborn/detached>}', not the payload"
+  fail "crafted branch name does NOT inject (no shell eval)" "test setup vacuous: branch is '${got_br:-<unborn>}'"
 else
-  rm -f "$BRH/BR_INJECTED"
-  out="$(run_in_repo "$BRH" 2>/dev/null)"; rc=$?
-  if [ -e "$BRH/BR_INJECTED" ]; then
-    fail "crafted branch name does NOT inject code (RCE blocked)" "marker created — injection fired"
+  rm -f "$SB/BR_INJECTED"
+  out="$(run_sl "$BRH" "" 2>/dev/null)"; rc=$?
+  if [ -e "$SB/BR_INJECTED" ]; then
+    fail "crafted branch name does NOT inject (no shell eval)" "sentinel created — injection fired"
   elif [ "$rc" -ne 0 ] || [ -z "$out" ]; then
-    fail "crafted branch name does NOT inject code (RCE blocked)" "statusline did not render the sink (rc=$rc) — marker-absence would be a false pass"
+    fail "crafted branch name does NOT inject (no shell eval)" "statusline did not render (rc=$rc)"
   else
-    pass "crafted branch name does NOT inject code (RCE blocked)"
+    pass "crafted branch name does NOT inject (no shell eval)"
   fi
+  case "$out" in
+    *">BR_INJECTED"*) pass "crafted branch name is rendered as text" ;;
+    *) fail "crafted branch name is rendered as text" "not found in output" ;;
+  esac
 fi
+
+# ── (3) crafted SESSION name — flows from JSON straight into the ambient line ─────
+rm -f "$SB/SESS_INJECTED"
+EVIL_SESS="s\$(touch SESS_INJECTED);touch SESS_INJECTED"
+out="$(run_sl "$SB" "$EVIL_SESS" 2>/dev/null)"; rc=$?
+if [ -e "$SB/SESS_INJECTED" ]; then
+  fail "crafted session_name does NOT inject (no shell eval)" "sentinel created — injection fired"
+elif [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+  fail "crafted session_name does NOT inject (no shell eval)" "statusline did not render (rc=$rc)"
+else
+  pass "crafted session_name does NOT inject (no shell eval)"
+fi
+# Session is uppercased in the render; assert the uppercased crafted text appears.
+case "$out" in
+  *"TOUCH SESS_INJECTED"*) pass "crafted session_name is rendered as (uppercased) text" ;;
+  *) fail "crafted session_name is rendered as (uppercased) text" "not found in output" ;;
+esac
 
 t_summary

@@ -110,11 +110,12 @@ check_construct "\${v^^}/\${v,,}"   "$CASEMOD"
 check_construct "base64 -w"         "$BASE64_W"
 
 # ── 3. Where a GNU-only date/stat IS used, it must be FLAVOR-GATED ────────────
-# statusline.sh legitimately uses `date -d` and `stat -c` on GNU hosts, but ONLY
-# inside a probed `if [ "$DATE_FLAVOR" = "gnu" ]` / STAT_FLAVOR branch with a BSD
-# fallback. Pin that: if the literal `date -d`/`stat -c` text appears in a file,
-# that file must also establish the flavor probe — otherwise the BSD path is
-# missing and macOS scenarios silently produce wrong output.
+# A general guard, not tied to any one script: if a shipped `.sh` uses `date -d` or
+# `stat -c` (GNU-only), it must do so ONLY inside a probed `if [ "$DATE_FLAVOR" = "gnu" ]`
+# / STAT_FLAVOR branch with a BSD fallback — otherwise the BSD path is missing and macOS
+# scenarios silently produce wrong output. (The statusline once needed this carve-out; it
+# is now statusline.ts, which uses Date/Intl and forks no `date`/`stat`, so no shipped
+# script currently trips this — the check stays as a tripwire for future hooks.)
 for s in "${SCRIPTS[@]}"; do
   rel="${s#$REPO_ROOT/}"
   if /usr/bin/grep -qE 'date[[:space:]]+-d|date[[:space:]]+--date' "$s"; then

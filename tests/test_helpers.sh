@@ -39,11 +39,20 @@ SONLY='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","com
 PONLY="$(printf %s "$SONLY" | src prune_hook_regs leak-guard.sh)"
 assert_ok "pruning the last hook removes the empty event" jqe "$PONLY" '(.hooks // {}) == {}'
 
-# ── prune_statusline: drop the kit statusLine, keep an unrelated one ──────────
-PL="$(printf %s '{"statusLine":{"command":"/p/hooks/statusline.sh"}}' | src prune_statusline statusline.sh)"
-assert_ok "statusLine removed when basename matches" jqe "$PL" 'has("statusLine") | not'
-KEEP="$(printf %s '{"statusLine":{"command":"/my/own.sh"}}' | src prune_statusline statusline.sh)"
-assert_ok "unrelated statusLine kept" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
+# ── prune_statusline: drop the kit statusLine (EITHER extension), keep an unrelated one ──
+# The matcher strips the .sh/.ts from its argument to a stem and tests both, so the SAME
+# call prunes a current .ts registration AND a residual .sh one left on a pre-port profile.
+PL="$(printf %s '{"statusLine":{"command":"/p/hooks/statusline.ts"}}' | src prune_statusline statusline.ts)"
+assert_ok "statusLine removed when .ts basename matches" jqe "$PL" 'has("statusLine") | not'
+# The manifest now passes .../statusline.ts, but a pre-port profile still carries a .sh
+# command — the stem-based matcher must prune it too (the upgrade-then-deselect path).
+PLSH="$(printf %s '{"statusLine":{"command":"/p/hooks/statusline.sh"}}' | src prune_statusline statusline.ts)"
+assert_ok "residual .sh statusLine pruned by the .ts-stem matcher" jqe "$PLSH" 'has("statusLine") | not'
+# A bun-prefixed command (the real kit shape, two tokens) still END-anchors on the .ts.
+PLBUN="$(printf %s '{"statusLine":{"command":"/usr/bin/bun /p/hooks/statusline.ts"}}' | src prune_statusline statusline.ts)"
+assert_ok "bun-prefixed kit statusLine pruned (end-anchored on .ts)" jqe "$PLBUN" 'has("statusLine") | not'
+KEEP="$(printf %s '{"statusLine":{"command":"/my/own.sh"}}' | src prune_statusline statusline.ts)"
+assert_ok "unrelated statusLine kept (neither .sh nor .ts stem matches)" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
 
 # ── adversarial characterization — the merge/prune INVARIANTS that make the gnarly
 #    jq safe to modify: a future edit that breaks any of these fails HERE. Asserted

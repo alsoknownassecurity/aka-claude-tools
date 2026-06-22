@@ -29,7 +29,7 @@ assert_ok   "settings.json is valid JSON" jq -e . "$PROFILE/settings.json"
 assert_file "hook placed: leak-guard.sh"      "$PROFILE/hooks/leak-guard.sh"
 assert_file "command placed: wrap-up.md"     "$PROFILE/commands/wrap-up.md"
 assert_file "skill placed: shell-audit"      "$PROFILE/skills/shell-audit"
-assert_file "statusline hook placed"         "$PROFILE/hooks/statusline.sh"
+assert_file "statusline hook placed"         "$PROFILE/hooks/statusline.ts"
 
 # Deployed kit hook carries the managed marker (drives self-clean on later rebuilds).
 assert_lit  "deployed hook carries managed-hook marker" \
@@ -39,7 +39,7 @@ assert_lit  "deployed hook carries managed-hook marker" \
 assert_ok   "leak-guard registered in settings.PreToolUse" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$PROFILE/settings.json' >/dev/null"
 assert_ok   "statusLine command wired in settings" \
-  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.sh\")' '$PROFILE/settings.json' >/dev/null"
+  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$PROFILE/settings.json' >/dev/null"
 
 # No maintainer-only \$comment keys leaked into the user's merged settings.
 assert_ok   "no \$comment keys in deployed settings" \
@@ -88,7 +88,7 @@ assert_eq   "deselect-all re-run exits 0" "0" "$rc3"
                                       || pass "wrap-up command removed on deselect-all"
 [ -e "$PROFILE/skills/shell-audit" ]  && fail "shell-audit skill removed on deselect-all" "still present" \
                                       || pass "shell-audit skill removed on deselect-all"
-[ -e "$PROFILE/hooks/statusline.sh" ] && fail "statusline hook removed on deselect-all" "still present" \
+[ -e "$PROFILE/hooks/statusline.ts" ] && fail "statusline hook removed on deselect-all" "still present" \
                                       || pass "statusline hook removed on deselect-all"
 
 assert_ok   "settings.json still valid JSON after uninstall" jq -e . "$PROFILE/settings.json"

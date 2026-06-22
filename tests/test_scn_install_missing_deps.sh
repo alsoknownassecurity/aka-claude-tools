@@ -161,4 +161,30 @@ assert_lit  "bun absent (deselected): managed alias block written to rc" \
 assert_ok   "bun absent (deselected): no \$comment keys in deployed settings" \
   bash -c "jq -e '[.. | objects | keys[]] | index(\"\$comment\") | not' '$S2B' >/dev/null"
 
+# ── 2c: statusline selected + bun absent → abort (the statusline is a .ts hook that,
+#        like command-guard, can't run without bun; the gate requires bun for EITHER). ──
+SB2C="$(sandbox)"
+RC2C="$SB2C/.bashrc"; touch "$RC2C"
+PROFILE2C="$SB2C/.claude-aka"
+STUB2C="$SB2C/stubbin"
+make_stub_path "$STUB2C" bun
+out2c="$SB2C/install.log"
+
+# command-guard NOT selected — only statusline pulls bun in here, proving the gate
+# broadened beyond command-guard.
+SEL2C="secure-settings leak-guard statusline wrap-up"
+env -i PATH="$STUB2C" HOME="$SB2C" SHELL=/bin/bash CT_ADDITIONS="$SEL2C" \
+  bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$out2c" 2>&1
+rc2c=$?
+
+assert_ok   "bun absent + statusline selected: install exits NON-zero (aborted)" \
+  bash -c "[ '$rc2c' -ne 0 ]"
+assert_grep "bun absent (statusline): reports bun is required (not a silent skip)" \
+  'bun.*required|required.*bun' "$out2c"
+# FAIL CLOSED: the gate runs before the build mkdir, so no profile dir / no rc block.
+[ -e "$PROFILE2C" ] && fail "bun absent (statusline): profile dir NOT created" "it exists at $PROFILE2C" \
+                    || pass "bun absent (statusline): profile dir NOT created"
+assert_nlit "bun absent (statusline): no alias block written to rc" \
+  ">>> aka-claude-tools managed: aka" "$RC2C"
+
 t_summary

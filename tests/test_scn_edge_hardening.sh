@@ -37,7 +37,7 @@ printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | sh -c "$WGCMD
 assert_eq "quoted leak-guard command executes through a shell (space-safe)" "0" "$?"
 # statusLine command is quoted + suffix-matchable too.
 assert_ok "statusLine command shell-quoted + suffix matches" \
-  bash -c "jq -e '(.statusLine.command|startswith(\"'\''\")) and (.statusLine.command|endswith(\"/hooks/statusline.sh\"))' '$S' >/dev/null"
+  bash -c "jq -e '(.statusLine.command|startswith(\"'\''\")) and (.statusLine.command|endswith(\"/hooks/statusline.ts\"))' '$S' >/dev/null"
 
 # ── B. nested \$comment never leaks; user keys preserved ─────────────────────
 # merge_settings is a pure helper — reach it by sourcing install.sh in a subshell.

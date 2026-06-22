@@ -47,8 +47,8 @@
       "name": "Responsive status line",
       "prompt": "Responsive status line?",
       "recommended": true,
-      "description": "Width-adaptive status line (git, context, usage). Resolves its own config dir, so it works in any isolated config folder.",
-      "statusLine": "hooks/statusline.sh"
+      "description": "Width-adaptive status line (git, context, usage). Resolves its own config dir, so it works in any isolated config folder. Runs under bun (a hard dependency of this addition, like command-guard) — not a security boundary, so the bun requirement is acceptable.",
+      "statusLine": "hooks/statusline.ts"
     },
     {
       "id": "wrap-up",

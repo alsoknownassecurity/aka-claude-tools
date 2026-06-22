@@ -6,6 +6,10 @@ claude-tools.config
 *.local
 .DS_Store
 
+# Dev-only typecheck deps (the hooks run with zero dependencies; node_modules
+# exists only for `tsc` — see package.json). bun.lock IS committed for reproducible CI.
+node_modules/
+
 # Editor noise
 .idea/
 .vscode/

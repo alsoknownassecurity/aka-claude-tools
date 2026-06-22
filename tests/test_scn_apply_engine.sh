@@ -35,13 +35,13 @@ assert_ok   "settings.json is valid JSON" jq -e . "$S"
 assert_file "leak-guard.sh placed"  "$DIR/hooks/leak-guard.sh"
 assert_file "wrap-up.md placed"    "$DIR/commands/wrap-up.md"
 assert_file "shell-audit skill placed" "$DIR/skills/shell-audit"
-assert_file "statusline.sh placed" "$DIR/hooks/statusline.sh"
+assert_file "statusline.ts placed" "$DIR/hooks/statusline.ts"
 assert_ok   "leak-guard registered ONCE (web tools only; Bash is command-guard's)" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|map(select(endswith(\"/leak-guard.sh\")))|length==1' '$S' >/dev/null"
 assert_ok   "kit denies present (secure-settings landed)" \
   bash -c "jq -e '((.permissions.deny // [])|length) > 0' '$S' >/dev/null"
 assert_ok   "statusLine wired" \
-  bash -c "jq -e '(.statusLine.command // \"\")|endswith(\"/statusline.sh\")' '$S' >/dev/null"
+  bash -c "jq -e '(.statusLine.command // \"\")|endswith(\"/statusline.ts\")' '$S' >/dev/null"
 assert_ok   "no \$comment maintainer leak" \
   bash -c "jq -e '[.. | objects | keys[]?]|index(\"\$comment\")|not' '$S' >/dev/null"
 # Engine mode is chrome-free: no interactive banner.

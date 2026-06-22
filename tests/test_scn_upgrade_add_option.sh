@@ -43,7 +43,7 @@ assert_eq   "clean base install exits 0" "0" "$rc1"
 assert_file "base hook deployed: leak-guard.sh"     "$PROFILE/hooks/leak-guard.sh"
 assert_file "base command deployed: wrap-up.md"    "$PROFILE/commands/wrap-up.md"
 assert_file "base skill deployed: shell-audit"     "$PROFILE/skills/shell-audit"
-assert_file "base statusline hook deployed"        "$PROFILE/hooks/statusline.sh"
+assert_file "base statusline hook deployed"        "$PROFILE/hooks/statusline.ts"
 assert_ok   "settings.json valid JSON after base install" jq -e . "$PROFILE/settings.json"
 
 # The two additions we will ADD on upgrade must NOT be present yet.
@@ -58,7 +58,7 @@ assert_ok   "settings.json valid JSON after base install" jq -e . "$PROFILE/sett
 S="$PROFILE/settings.json"
 WG_SUM_BEFORE="$(cksum < "$PROFILE/hooks/leak-guard.sh")"
 WU_SUM_BEFORE="$(cksum < "$PROFILE/commands/wrap-up.md")"
-SL_SUM_BEFORE="$(cksum < "$PROFILE/hooks/statusline.sh")"
+SL_SUM_BEFORE="$(cksum < "$PROFILE/hooks/statusline.ts")"
 cp "$S" "$SB/settings.before.json"
 # leak-guard registration count (it registers under TWO matchers by design).
 WG_REGS_BEFORE=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.sh"))] | length' "$S")
@@ -90,17 +90,17 @@ assert_eq   "no duplicate PreToolUse registrations after upgrade" "$n_tot" "$n_u
 assert_file "prev leak-guard hook still present"  "$PROFILE/hooks/leak-guard.sh"
 assert_file "prev wrap-up command still present" "$PROFILE/commands/wrap-up.md"
 assert_file "prev shell-audit skill still present" "$PROFILE/skills/shell-audit"
-assert_file "prev statusline hook still present"  "$PROFILE/hooks/statusline.sh"
+assert_file "prev statusline hook still present"  "$PROFILE/hooks/statusline.ts"
 assert_eq   "prev leak-guard hook content unchanged"  "$WG_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/leak-guard.sh")"
 assert_eq   "prev wrap-up command content unchanged" "$WU_SUM_BEFORE" "$(cksum < "$PROFILE/commands/wrap-up.md")"
-assert_eq   "prev statusline hook content unchanged" "$SL_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/statusline.sh")"
+assert_eq   "prev statusline hook content unchanged" "$SL_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/statusline.ts")"
 
 assert_ok   "prev leak-guard registration retained" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
 WG_REGS_AFTER=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.sh"))] | length' "$S")
 assert_eq   "prev leak-guard registration count unchanged" "$WG_REGS_BEFORE" "$WG_REGS_AFTER"
 assert_ok   "statusLine still wired after upgrade" \
-  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.sh\")' '$S' >/dev/null"
+  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"
 
 # (d) the user's own (non-kit) deny rule planted before install survives the upgrade.
 assert_ok   "user's own deny rule preserved through upgrade" \

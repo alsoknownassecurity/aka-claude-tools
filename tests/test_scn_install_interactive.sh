@@ -113,7 +113,7 @@ assert_ok   "p1 secure-settings honored: deny array non-empty" \
 # REJECTED additions → their artifacts must be ABSENT (reject is honored).
 [ -e "$P1/hooks/leak-guard.sh" ] && fail "p1 rejected leak-guard not deployed" "leak-guard.sh present" \
                                || pass "p1 rejected leak-guard not deployed"
-[ -e "$P1/hooks/statusline.sh" ] && fail "p1 rejected statusline not deployed" "statusline.sh present" \
+[ -e "$P1/hooks/statusline.ts" ] && fail "p1 rejected statusline not deployed" "statusline.ts present" \
                                 || pass "p1 rejected statusline not deployed"
 [ -e "$P1/skills/shell-audit" ] && fail "p1 rejected shell-audit not deployed" "shell-audit present" \
                                || pass "p1 rejected shell-audit not deployed"

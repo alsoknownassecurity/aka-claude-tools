@@ -1,0 +1,15 @@
+{
+  "$comment": "Typecheck-only config for the bun-runtime hooks (command-guard.ts, statusline.ts). CI runs `tsc --noEmit` against it; bun runs the files directly, so nothing is emitted.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["config/hooks/*.ts", "tests/*.test.ts"]
+}

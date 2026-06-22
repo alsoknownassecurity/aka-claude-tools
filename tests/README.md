@@ -3,7 +3,7 @@
 The flow test suite. Fully sandboxed — every test runs against a fake `$HOME`,
 throwaway git clones, and temp dirs; **no real `~/.claude*` profile or the real
 repo working tree is ever touched.** Deps: `bash`, `jq`, `git` (the project's own),
-plus `bun` for the `command-guard` paths (skipped with a note when absent).
+plus `bun` for the `command-guard` and `statusline` paths (both are `.ts` hooks).
 
 ```bash
 tests/run.sh              # all tests
@@ -21,7 +21,9 @@ so the `.ts` guard deploy is exercised) alongside the shell/json lint
 | `test_install` | Forward `--defaults` install: profile created, every recommended addition deployed with the path remap, no `$comment` leak. |
 | `test_idempotency` | A re-run converges: settings.json canonical-identical (`jq -S`), a single managed alias block, no duplicate hook registrations. |
 | `test_settings_merge` | A layer-in-place install over a profile with the user's OWN denies/allows/hooks unions them in (never drops them), adopts kit rules, strips `$comment`. |
-| `test_helpers` | Unit tests of install.sh's pure helpers — sourced via the source-guard, in a subshell: `merge_settings`, `prune_hook_regs`, `prune_statusline`, and the rebuild rollback handler. |
+| `test_helpers` | Unit tests of install.sh's pure helpers — sourced via the source-guard, in a subshell: `merge_settings`, `prune_hook_regs`, `prune_statusline` (either-extension stem matching — prunes both a current `statusline.ts` and a residual pre-port `statusline.sh` registration), and the rebuild rollback handler. |
+| `test_statusline_unit` | In-process unit tests of `config/hooks/statusline.ts` (run under `bun`): golden `render()` output for all four width bands, plus the display-width helpers (`stringWidth`/`truncateToWidth` — CJK=2, combining=0, flag=2, column-not-byte truncation), `parseEpoch`, `deriveModel`, `widthMode`, `meter`, `levelColor`. |
+| `test_statusline_injection` | Regression net that the TS port introduced no shell evaluation: invokes `statusline.ts` with crafted `branch`/`dir`/`session_name` shell metacharacters and asserts exit 0, the crafted name renders, and no sentinel side-effect file is created. |
 | `test_uninstall` | Deselecting an addition removes its files AND prunes its settings registrations; still-selected additions and the user's own settings stay. |
 | `test_select` | `CT_ADDITIONS` selection lever: exact-subset deploy, a non-recommended addition + its config template, empty = none, an unknown id aborts loudly. |
 | `test_reconcile` | A retired kit permission rule is dropped on upgrade; a rule the kit never shipped (the user's own) is kept. |

@@ -235,22 +235,27 @@ prune_hook_regs_resolving() {
       else . end'
 }
 
-# Drop the kit's .statusLine on deselect — identified by its command END-ANCHORED on
-# $1 (the kit always writes "<cfg>/hooks/statusline.sh", no trailing args) — and if a
-# user's own prior statusLine was stashed when the addition was installed (see the
-# stash step in apply_additions), RESTORE it verbatim instead of leaving none. The
-# statusLine is a singleton object the merge overwrites, so stash+restore is the only
-# way to deselect 'statusline' without losing a value the user had before.
+# Drop the kit's .statusLine on deselect — identified by its command END-ANCHORED on the
+# stem of $1 with EITHER extension. The kit's command tail is "/hooks/statusline.ts" today
+# (registered as "'<bun>' <cfg>/hooks/statusline.ts"); a profile created before the port
+# carries "/hooks/statusline.sh". A deselect must prune whichever is registered, so the .sh
+# extension is stripped from $1 to a stem and both "<stem>.sh" and "<stem>.ts" are tested.
+# If a user's own prior statusLine was stashed when the addition was installed (see the
+# stash step in apply_additions), RESTORE it verbatim instead of leaving none — the
+# statusLine is a singleton object the merge overwrites, so stash+restore is the only way
+# to deselect 'statusline' without losing a value the user had before.
 # END-anchored (endswith), NOT a substring contains: a user command that merely MENTIONS
 # the path mid-string (`echo .../statusline.sh && mine`) or has a suffix
 # (`.../statusline.sh-wrapper`) is NOT the kit's and must not be touched. The matcher in
-# the stash guard (apply_additions) uses the SAME endswith so stash and restore can't disagree.
+# the stash guard (apply_additions) tests the SAME either-extension stem so stash and
+# restore can't disagree.
 prune_statusline() {
   jq --arg b "$1" '
-    if (.statusLine|type)=="object"
+    ($b | rtrimstr(".sh") | rtrimstr(".ts")) as $stem
+    | if (.statusLine|type)=="object"
        and ((.statusLine.command) as $c
             | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-            | endswith($b))
+            | (endswith($stem + ".sh") or endswith($stem + ".ts")))
     then (if has("_aka_prior_statusLine")
           then .statusLine = ._aka_prior_statusLine | del(._aka_prior_statusLine)
           else del(.statusLine) end)
@@ -307,9 +312,11 @@ prune_addition_from_settings() {
   sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
-  # End-anchored on "/hooks/statusline.sh" (the kit's command tail), not the bare
-  # basename, so a user statusLine named statusline.sh in some OTHER dir, or a suffixed
-  # path, is never matched as the kit's (consistent with the stash guard in apply_additions).
+  # End-anchored on "/hooks/statusline.{sh,ts}" (the kit's command tail, either extension),
+  # not the bare basename, so a user statusLine named statusline.sh in some OTHER dir, or a
+  # suffixed path, is never matched as the kit's (consistent with the stash guard in
+  # apply_additions). $sline is the current manifest path (…/statusline.ts); prune_statusline
+  # strips the extension and tests both, so a residual .sh registration also prunes.
   [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "/$sline")"
   # The statusline addition can pin a weather location into .preferences.location at
   # install; prune_statusline only drops the statusLine command, so remove that pinned
@@ -737,11 +744,12 @@ apply_additions() {
   # empty dir at apply_entry, which is benign — no settings/payload/rc are written).
   # command-guard is a default-on SECURITY hook whose runtime is bun; shipping it
   # silently disabled is not an option, so a missing bun ABORTS rather than soft-
-  # skips. bun is required ONLY when command-guard is selected — a non-bun selection
-  # still installs. ensure_dep offers to install bun first (interactive); it die()s
-  # only on decline / non-interactive-absent.
-  if is_selected command-guard "$_sel_ids"; then
-    ensure_dep bun "bun — required runtime for the command-guard Bash egress hook" 1
+  # skips. The statusline is a .ts that also cannot run without bun (it can't degrade
+  # like the old bash version), so bun is required when EITHER is selected — a selection
+  # with neither still installs. ensure_dep offers to install bun first (interactive);
+  # it die()s only on decline / non-interactive-absent, so a partial apply is impossible.
+  if is_selected command-guard "$_sel_ids" || is_selected statusline "$_sel_ids"; then
+    ensure_dep bun "bun — required runtime for command-guard and/or the statusline" 1
   fi
 
   # ── build ──
@@ -815,8 +823,15 @@ apply_additions() {
     command -v rtk >/dev/null 2>&1 || warn "RTK rewriting registered but inert until 'rtk' is installed."
   fi
   if is_selected statusline "$_sel_ids"; then
-    place_file "$CONFIG_SRC/hooks/statusline.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$cqd/hooks/statusline.sh" \
+    # bun is guaranteed present here — the hard-dependency gate above aborts the install
+    # if statusline is selected without bun (the .ts can't degrade-run like the old .sh).
+    local bun_bin; bun_bin="$(command -v bun)"
+    place_file "$CONFIG_SRC/hooks/statusline.ts" "$config_dir/hooks" +x
+    # Register with bun's ABSOLUTE path (same two-token quoted shape as command-guard):
+    # both tokens shell-quoted so spaces/metachars in the bun path or config dir don't
+    # split, and the command still ends with the literal "/hooks/statusline.ts" the
+    # prune/stash matchers anchor on.
+    add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/statusline.ts" \
       '.statusLine = {type:"command",command:$cmd,refreshInterval:2}' <<<"$add")"
     # Optional location pin for accurate weather (default: auto-detect by IP).
     isay ""
@@ -944,16 +959,18 @@ apply_additions() {
   # plain install would silently lose a statusLine the user already had. Stash a NON-kit
   # prior value once — prune_statusline restores it verbatim if the addition is later
   # deselected. Idempotency guard: only stash when the current statusLine is the user's
-  # (command does NOT END with our /hooks/statusline.sh) AND nothing is stashed yet, so a
-  # re-apply can never overwrite the saved original with the kit value. The endswith here
-  # MUST match prune_statusline's anchor exactly — substring contains would mis-stash a
-  # user command that merely mentions the path mid-string or has a suffix.
+  # (command does NOT END with our /hooks/statusline.{sh,ts}) AND nothing is stashed yet,
+  # so a re-apply can never overwrite the saved original with the kit value. The
+  # either-extension endswith here MUST match prune_statusline's anchor exactly (so a kit
+  # .sh registration on a pre-port profile is recognised as the kit's, not stashed as the
+  # user's) — substring contains would mis-stash a user command that merely mentions the
+  # path mid-string or has a suffix.
   if is_selected statusline "$_sel_ids" && [ "$existing" != "{}" ]; then
     if printf '%s' "$existing" | jq -e '
           (.statusLine|type)=="object"
           and ((.statusLine.command) as $c
                | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-               | endswith("/hooks/statusline.sh") | not)
+               | (endswith("/hooks/statusline.sh") or endswith("/hooks/statusline.ts")) | not)
           and (has("_aka_prior_statusLine")|not)' >/dev/null 2>&1; then
       warn "Replacing your existing statusLine with the kit's — your previous one is saved and restored if you later deselect 'statusline'."
       existing="$(printf '%s' "$existing" | jq '._aka_prior_statusLine = .statusLine')"

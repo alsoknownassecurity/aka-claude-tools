@@ -29,13 +29,13 @@ KIT_ENV_KEY="$(jq -r --arg f "$SETF" '.env | keys[0] // empty' "$REPO_ROOT/confi
 run "secure-settings leak-guard statusline wrap-up harness-pointer"
 assert_eq "install exits 0" "0" "$?"
 assert_file "X(hook) leak-guard.sh deployed"          "$PROFILE/hooks/leak-guard.sh"
-assert_file "X(statusLine) statusline.sh deployed"   "$PROFILE/hooks/statusline.sh"
+assert_file "X(statusLine) statusline.ts deployed"   "$PROFILE/hooks/statusline.ts"
 assert_file "keeper harness-pointer.sh deployed" "$PROFILE/hooks/harness-pointer.sh"
 assert_file "keeper wrap-up.md deployed"             "$PROFILE/commands/wrap-up.md"
 assert_ok "leak-guard hook registered" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
-assert_ok "statusLine registered (points at statusline.sh)" \
-  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.sh\")' '$S' >/dev/null"
+assert_ok "statusLine registered (points at statusline.ts)" \
+  bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"
 assert_lit "secure-settings deny rule present"  "$KIT_DENY" "$S"
 assert_ok "secure-settings env key present" \
   bash -c "jq -e --arg k '$KIT_ENV_KEY' '.env | has(\$k)' '$S' >/dev/null"
@@ -58,7 +58,7 @@ assert_ok "settings.json still valid JSON after deselect" jq -e . "$S"
 # X's FILES removed.
 [ -e "$PROFILE/hooks/leak-guard.sh" ] && fail "leak-guard hook file removed on deselect" "still present" \
                                      || pass "leak-guard hook file removed on deselect"
-[ -e "$PROFILE/hooks/statusline.sh" ] && fail "statusline file removed on deselect" "still present" \
+[ -e "$PROFILE/hooks/statusline.ts" ] && fail "statusline file removed on deselect" "still present" \
                                       || pass "statusline file removed on deselect"
 
 # X's hook registration pruned.
@@ -66,7 +66,7 @@ assert_ok "leak-guard registration pruned from .hooks" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$S' >/dev/null"
 # X's statusLine pruned.
 assert_ok "statusLine pruned from settings" \
-  bash -c "jq -e '((.statusLine.command // \"\") | endswith(\"/statusline.sh\")) | not' '$S' >/dev/null"
+  bash -c "jq -e '((.statusLine.command // \"\") | endswith(\"/statusline.ts\")) | not' '$S' >/dev/null"
 # X's perm rule pruned (kit's deny gone).
 assert_nlit "secure-settings kit deny rule pruned" "$KIT_DENY" "$S"
 # X's env key pruned.
