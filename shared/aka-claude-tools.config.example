@@ -27,8 +27,14 @@
 # This is a per-environment denylist of identifiers that must never egress; a hit
 # blocks the query/command before it leaves.
 #
-# CT_EGRESS_PATTERNS — ONE extended-regex (ERE), pipe-separated alternatives.
-# Substring match, case-sensitive; escape any literal dots. Categories to mix:
+# CT_EGRESS_PATTERNS — ONE regex, pipe-separated alternatives. Substring match,
+# case-sensitive; escape any literal dots. It is matched by BOTH the web guard
+# (grep -E) and the Bash guard (JavaScript), so it MUST use the PORTABLE SUBSET:
+# character classes like [0-9] / [A-Za-z] — NOT \d / \w / \s / \b, NO POSIX classes
+# [[:alpha:]], NO lookaround (?…). install.sh REJECTS non-portable constructs (they
+# behave differently in the two engines and would leak on one surface). The value is
+# compiled into an inert JSON sidecar at install — edit it, then re-run ./install.sh
+# to apply it. Categories to mix:
 #
 #   internal / tailnet domains   acme\.internal | [a-z0-9-]+\.ts\.net
 #   RFC1918 + CGNAT ranges       10\.[0-9]+\.[0-9]+\.[0-9]+ | 192\.168\.[0-9]+\.[0-9]+

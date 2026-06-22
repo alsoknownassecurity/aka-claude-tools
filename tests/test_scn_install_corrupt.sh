@@ -118,10 +118,10 @@ fi
 assert_ok "PART B: settings.json still valid JSON after re-run" jq -e . "$SB"
 
 # Idempotent registration: leak-guard registered under EXACTLY the kit's canonical
-# matcher set (WebSearch|WebFetch + Bash = 2), no duplicate stray reg from the
-# orphaned one we left behind.
+# matcher (WebSearch|WebFetch = 1; web-only, Bash is command-guard's), no duplicate
+# stray reg from the orphaned one we left behind.
 n_wg=$(jq '[.hooks.PreToolUse[] | select(.hooks[].command | endswith("/leak-guard.sh"))] | length' "$SB")
-assert_eq "PART B: leak-guard registered under exactly the kit's 2 matchers (idempotent)" "2" "$n_wg"
+assert_eq "PART B: leak-guard registered under exactly the kit's 1 matcher (idempotent)" "1" "$n_wg"
 n_tot=$(jq '.hooks.PreToolUse | length' "$SB")
 n_uniq=$(jq '.hooks.PreToolUse | unique_by(tojson) | length' "$SB")
 assert_eq "PART B: no duplicate PreToolUse registrations after redeploy" "$n_tot" "$n_uniq"

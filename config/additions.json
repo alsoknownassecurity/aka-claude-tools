@@ -12,23 +12,24 @@
     {
       "id": "leak-guard",
       "name": "leak-guard",
-      "prompt": "leak-guard (block secrets in web queries + outbound Bash)?",
+      "prompt": "leak-guard (block secrets + internal identifiers in WEB queries)?",
       "recommended": true,
-      "description": "PreToolUse guard on WebSearch/WebFetch, plus outbound Bash commands (fast-gated: only commands containing curl/wget/nc/… are scanned, ~98% of Bash calls pay ~0 ms). Blocks queries/commands containing detected secrets (trufflehog), token/SSH-key shapes, and — if configured — your org's internal identifiers.",
+      "description": "PreToolUse guard on WebSearch/WebFetch (WEB egress only — Bash egress is command-guard's surface). Blocks web queries/urls/prompts containing detected secrets (trufflehog), token/SSH-key shapes, and — if configured — your org's internal identifiers (CT_EGRESS_PATTERNS, read from the install-compiled org-egress.json sidecar; portable-subset regex only). Pure bash + jq, so it keeps guarding the web surface even if bun is broken (runtime-diversity hedge), and a web-only install needs no bun.",
       "hook": "hooks/leak-guard.sh",
-      "matcher": "WebSearch|WebFetch + Bash (gated)",
+      "matcher": "WebSearch|WebFetch",
       "event": "PreToolUse",
       "usesConfig": true
     },
     {
       "id": "command-guard",
       "name": "command-guard",
-      "prompt": "command-guard — block credential exfil, curl|bash + writes to shell startup files in Bash [bun]?",
+      "prompt": "command-guard — sole Bash egress guard: credential exfil, curl|bash, startup-file writes, internal identifiers [bun]?",
       "recommended": true,
-      "description": "PreToolUse guard on Bash. Denies credential exfil (key shape + outbound tool), pipe-to-shell (curl | bash), and writes to shell startup files (~/.zshrc, ~/.bashrc, … — a persistence vector the secure-settings Edit/Write deny can't reach via a Bash redirection); alerts on nc/socat/sendmail/env-dump/inline-interpreter. Requires bun — a hard dependency: selecting command-guard aborts the install if bun is absent, rather than shipping a default-on security guard silently disabled.",
+      "description": "PreToolUse guard on Bash — the SOLE Bash egress guard (leak-guard is web-only). Denies pipe-to-shell (curl | bash) and writes to shell startup files (~/.zshrc, ~/.bashrc, … — a persistence vector the secure-settings Edit/Write deny can't reach via a Bash redirection); and on outbound commands (curl/wget/nc/…) denies a detected secret (trufflehog), an org internal-identifier match (CT_EGRESS_PATTERNS via the shared sidecar), and a credential key-shape paired with the outbound tool; alerts on nc/socat/sendmail/env-dump/inline-interpreter. Requires bun — a hard dependency: selecting command-guard aborts the install if bun is absent, rather than shipping a default-on security guard silently disabled.",
       "hook": "hooks/command-guard.ts",
       "matcher": "Bash",
-      "event": "PreToolUse"
+      "event": "PreToolUse",
+      "usesConfig": true
     },
     {
       "id": "rtk-safe",

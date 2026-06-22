@@ -461,6 +461,83 @@ setup_one_config() {
   fi
 }
 
+# compile_org_sidecar <config_dir> — compile the user's CT_EGRESS_PATTERNS from the
+# shell config into the inert JSON sidecar that BOTH egress guards read at runtime,
+# so no hook ever sources arbitrary shell. install.sh is the one-shot installer and
+# may safely evaluate the user's own config; the runtime hooks may not. Validated +
+# atomically published.
+compile_org_sidecar() {
+  local config_dir="$1"
+  local cfg="$config_dir/aka-claude-tools.config"
+  local sidecar="$config_dir/hooks/lib/org-egress.json"
+  [ -f "$cfg" ] || return 0                 # no config → no sidecar (org tier inactive)
+  [ -d "$config_dir/hooks/lib" ] || return 0 # lib not placed (no egress guard) — defensive
+
+  # Extract CT_EGRESS_PATTERNS by sourcing the config in a SUBSHELL (set +eu so the
+  # user's file can't trip our strict mode). The value never re-enters install's env.
+  local pat="" _src_rc=0
+  pat="$( set +eu; . "$cfg" >/dev/null 2>&1; _rc=$?; printf '%s' "${CT_EGRESS_PATTERNS:-}"; exit "$_rc" )" || _src_rc=$?
+  if [ "$_src_rc" -ne 0 ]; then
+    # Sourcing the config failed. Never silently disable the org tier, but tell the truth
+    # about what actually happened — the message differs by whether a pattern survived:
+    if [ -z "$pat" ]; then
+      # Nothing compiled (e.g. a syntax error before any assignment) — the tier is OFF.
+      warn "aka-claude-tools.config could not be sourced (exit $_src_rc) — org-egress patterns NOT compiled; the org-marker tier is INACTIVE until you fix the config and re-run ./install.sh."
+    else
+      # A pattern WAS set before the failure — the tier compiles with it, but part of the
+      # config did not run. Surface it (never hide a real source error) without the
+      # misleading "inactive" claim.
+      warn "aka-claude-tools.config sourced with an error (exit $_src_rc) — a pattern was set and compiled, but part of the config did not run. Review the config and re-run ./install.sh."
+    fi
+  fi
+
+  if [ -n "$pat" ]; then
+    case "$pat" in
+      *$'\n'*) die "CT_EGRESS_PATTERNS in $cfg must be a single line (multiline patterns are rejected)." ;;
+    esac
+    # STRICT portable-subset validator. The pattern is matched by TWO engines —
+    # leak-guard's grep -E (POSIX ERE, BSD+GNU) for web, command-guard's JS RegExp for
+    # Bash. Constructs that are co-valid but NON-equivalent across them diverge SILENTLY
+    # (blocked on one surface, leaked on the other; BSD-vs-GNU-dependent), so reject the
+    # known divergent classes and keep patterns in the subset where the two engines
+    # AGREE (not a proof of full equivalence — the same co-validity caveat
+    # secret-patterns.json documents: use [0-9A-Za-z], not \d/\s):
+    #   \\[0-9A-Za-z]  backslash shorthand/backref — \d \w \s \b … and \1 backrefs
+    #   \<  \>         GNU word boundaries (live in grep, not JS)
+    #   [[:            POSIX classes ([[:alpha:]] …)
+    #   (?             lookaround / non-capturing groups
+    # \. \( \| etc. (backslash + a non-alphanumeric, non-angle metachar) are fine.
+    if printf '%s' "$pat" | grep -qE '\\[0-9A-Za-z<>]|\[\[:|\(\?'; then
+      die "CT_EGRESS_PATTERNS in $cfg uses a non-portable regex construct (a \\d/\\w/\\s/\\b shorthand or \\N backref, a \\<\\> word boundary, a POSIX class [[:…:]], or lookaround/(?…)). These behave differently in grep -E vs JavaScript, so the web and Bash guards would diverge silently. Use the portable subset — e.g. [0-9] not \\d, [A-Za-z] not \\w. Fix it, then re-run."
+    fi
+    # Defense-in-depth: must still actually COMPILE as a POSIX ERE (catch unbalanced
+    # parens etc.). grep -E exits 2 on a bad pattern; capture it (set -e safe).
+    local _v=0; printf '' | grep -qE -- "$pat" 2>/dev/null || _v=$?
+    [ "$_v" -gt 1 ] && die "CT_EGRESS_PATTERNS in $cfg is not a valid POSIX ERE (grep -E rejects it). Fix it, then re-run."
+    # And as a JS RegExp, when bun is present (the JS consumer). The portable subset is
+    # JS-valid by construction, so this only catches malformed patterns.
+    if command -v bun >/dev/null 2>&1; then
+      bun -e 'try{new RegExp(process.argv[1])}catch(e){console.error(String(e));process.exit(1)}' "$pat" 2>/dev/null \
+        || die "CT_EGRESS_PATTERNS in $cfg is not a valid JavaScript RegExp (command-guard could not compile it). Fix it, then re-run."
+    fi
+  fi
+
+  # sourceHash lets BOTH guards warn when the config drifts post-install. Hash the RAW
+  # config FILE BYTES — the byte domain command-guard re-hashes via bun AND leak-guard
+  # re-hashes on the bun-less floor (NOT the shell-expanded value). Computed with a
+  # PORTABLE sha256, never bun, so a bun-less web-only install still publishes a usable
+  # hash for leak-guard's staleness check. sha256 hex is implementation-independent, so
+  # this equals command-guard's bun createHash over the same bytes.
+  local hash=""
+  hash="$(sha256_file "$cfg" 2>/dev/null || true)"
+
+  # Atomic publish: temp + rename, so a concurrent hook never reads a partial file.
+  local tmp="$sidecar.tmp.$$"
+  jq -n --arg p "$pat" --arg h "$hash" '{pattern:$p, sourceHash:$h}' > "$tmp" && mv -f "$tmp" "$sidecar"
+  if [ -n "$pat" ]; then ok "Compiled org-egress sidecar (CT_EGRESS_PATTERNS active)";
+  else ok "Compiled org-egress sidecar (no org patterns set — tier inactive)"; fi
+}
+
 # ── deterministic engine: layer additions onto a config dir ──────────────────
 # apply_additions <config_dir>  — place the selected additions (CT_ADDITIONS) and
 # merge their settings onto whatever already lives in <config_dir> (incl. a
@@ -502,6 +579,26 @@ apply_additions() {
     done < <(jq -r '.additions[] | [.id, (.recommended|tostring), (.prompt // .name)] | @tsv' "$CONFIG_SRC/additions.json")
   fi
 
+  # ── egress coupling check (runs BEFORE any write) ──
+  # leak-guard guards WEB egress only; Bash egress is command-guard's surface. The id
+  # 'leak-guard' USED to also cover Bash. The critical case (cross-check) is the UPGRADE
+  # TRANSITION: an existing profile whose leak-guard was registered on the Bash matcher,
+  # re-installed WITHOUT command-guard, would SILENTLY lose Bash egress coverage. Detect
+  # exactly that transition and ABORT (unless CT_ALLOW_UNGUARDED_BASH=1 acks web-only).
+  # A FRESH web-only install (no prior leak-guard-on-Bash) is a legitimate intentional
+  # choice — WARN, don't die. So the loud-fail targets the silent COVERAGE CHANGE, not
+  # every standalone-leak-guard selection.
+  if is_selected leak-guard "$_sel_ids" && ! is_selected command-guard "$_sel_ids" \
+     && [ "${CT_ALLOW_UNGUARDED_BASH:-0}" != "1" ]; then
+    if [ -f "$config_dir/settings.json" ] && jq -e '
+          [ .hooks.PreToolUse[]? | select(.matcher=="Bash")
+            | .hooks[]?.command // empty | select(endswith("/leak-guard.sh")) ] | length > 0
+        ' "$config_dir/settings.json" >/dev/null 2>&1; then
+      die "Upgrade would SILENTLY drop Bash egress coverage: this profile's leak-guard previously guarded Bash, but leak-guard is now WEB-only and command-guard (Bash egress) is not in your selection. Add command-guard, or set CT_ALLOW_UNGUARDED_BASH=1 to accept web-only."
+    fi
+    warn "⚠ leak-guard guards WEB egress only; command-guard (Bash egress) is not selected — your Bash egress is UNGUARDED. Add command-guard to guard outbound Bash commands."
+  fi
+
   # ── hard-dependency gate ──
   # Runs AFTER selection is known but BEFORE any dir/payload/rc write, so a missing
   # required runtime aborts cleanly with no partial apply (in interactive mode the
@@ -539,11 +636,10 @@ apply_additions() {
 
   if is_selected leak-guard "$_sel_ids"; then
     place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
-    # Registered twice: web tools (always scanned) and Bash (fast-gated — only
-    # commands containing an outbound tool are scanned; ~98% of calls pay ~0 ms).
+    # Registered on WEB tools only — Bash egress is command-guard's surface now (one
+    # PreToolUse process per tool surface; no double-spawn on Bash).
     add="$(jq --arg cmd "$cqd/hooks/leak-guard.sh" \
-      '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch",hooks:[{type:"command",command:$cmd}]},
-                             {matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
+      '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Optional: stronger secret detection. Degrades to regex tiers without it.
     ensure_dep trufflehog "trufflehog (leak-guard secret detection)" 0 || true
   fi
@@ -565,6 +661,9 @@ apply_additions() {
     add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/command-guard.ts" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     ok "command-guard enabled (bun: $bun_bin)"
+    # Optional: stronger Bash secret detection (command-guard runs trufflehog on
+    # outbound commands, like leak-guard does for web). Degrades to regex tiers without it.
+    ensure_dep trufflehog "trufflehog (command-guard secret detection)" 0 || true
   fi
   if is_selected rtk-safe "$_sel_ids"; then
     ensure_dep rtk "rtk (RTK rewriting)" 0 || true
@@ -633,10 +732,20 @@ apply_additions() {
     ok "Placed secure-deep-research workflow ${C_DIM}(invoke: /secure-deep-research)${C_RST}"
   fi
 
-  # 4c. opt-in config template if any config-driven hook was selected
-  if { is_selected leak-guard "$_sel_ids" || is_selected harness-pointer "$_sel_ids"; } && [ ! -f "$config_dir/aka-claude-tools.config" ]; then
+  # 4c. opt-in config template if any config-driven hook was selected. command-guard
+  # is in the trigger now: it reads CT_EGRESS_PATTERNS (via the compiled sidecar
+  # below), so a command-guard-only install must still get the config — else the
+  # org-marker tier silently vanishes for that install.
+  if { is_selected leak-guard "$_sel_ids" || is_selected command-guard "$_sel_ids" || is_selected harness-pointer "$_sel_ids"; } \
+     && [ ! -f "$config_dir/aka-claude-tools.config" ]; then
     cp "$REPO_DIR/shared/aka-claude-tools.config.example" "$config_dir/aka-claude-tools.config"
     ok "Placed aka-claude-tools.config (opt-in, empty by default)"
+  fi
+  # Compile the org-egress sidecar that BOTH egress guards read at runtime, so neither
+  # ever sources the shell config (a bun process can't safely evaluate arbitrary
+  # shell). Validated + atomically published. Whenever an egress guard is selected.
+  if is_selected leak-guard "$_sel_ids" || is_selected command-guard "$_sel_ids"; then
+    compile_org_sidecar "$config_dir"
   fi
 
   # 4d. merge settings (existing-in-dir ∪ additions) and write
@@ -691,16 +800,22 @@ apply_additions() {
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
 
-  # 4d-pre1a. The shared egress-guard lib (hooks/lib/secret-patterns.json) is owned by
-  # NO single addition — it's placed whenever EITHER leak-guard or command-guard is selected.
-  # The per-addition deselect loop above can't remove it (neither guard's owned-paths
-  # list includes it), so deselecting BOTH guards would orphan it. Remove it only when
-  # NEITHER consumer remains.
+  # 4d-pre1a. The shared egress-guard libs (hooks/lib/secret-patterns.json and the
+  # compiled hooks/lib/org-egress.json sidecar) are owned by NO single addition — they're
+  # placed/compiled whenever EITHER leak-guard or command-guard is selected. The
+  # per-addition deselect loop above can't remove them (neither guard's owned-paths list
+  # includes them), so deselecting BOTH guards would orphan them — and a leftover
+  # org-egress.json would also make the rmdir below fail, persisting hooks/lib. Remove
+  # both only when NEITHER consumer remains.
   if ! is_selected leak-guard "$_sel_ids" && ! is_selected command-guard "$_sel_ids"; then
-    if [ -e "$config_dir/hooks/lib/secret-patterns.json" ]; then
-      rm -f "$config_dir/hooks/lib/secret-patterns.json"
-      ok "Removed shared egress-guard lib (no guard selected)"
-    fi
+    _egress_lib_removed=
+    for _lib in secret-patterns.json org-egress.json; do
+      if [ -e "$config_dir/hooks/lib/$_lib" ]; then
+        rm -f "$config_dir/hooks/lib/$_lib"
+        _egress_lib_removed=1
+      fi
+    done
+    [ -n "$_egress_lib_removed" ] && ok "Removed shared egress-guard lib (no guard selected)"
     rmdir "$config_dir/hooks/lib" 2>/dev/null || true
   fi
 
