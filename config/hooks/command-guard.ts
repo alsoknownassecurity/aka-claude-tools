@@ -56,9 +56,14 @@ const FALLBACK_OUTBOUND = /\b(curl|wget|nc|ncat|socat|fetch)\b/i;
 // input). They OVER-block (the very FPs this PR removes) but must never UNDER-block what
 // the tokenizer would catch, so a parser failure degrades to "too strict", never to a
 // silent allow on the sole Bash guard. Deliberately broad: any pipe (incl. |&) into an
-// interpreter; any '>'-ish redirection OR write-verb anywhere on a line that names a
-// startup dotfile (a rare fallback path, so over-blocking a read like `cp .zshrc x` is fine).
-const PIPE_TO_SHELL_RAW = /\|&?\s*(sh|bash|zsh)\b/i;
+// interpreter — bare, by path (`| /bin/bash`), or wrapped in env (`| env -i bash`); any
+// '>'-ish redirection OR write-verb anywhere on a line that names a startup dotfile (a rare
+// fallback path, so over-blocking a read like `cp .zshrc x` is fine).
+// The env wrapper-word class is \S+ (not [-\w=]+) so a slash-bearing option ARG — `-C /tmp`,
+// BSD `-P /usr/bin` — doesn't break the skip, keeping the fallback a conservative SUPERSET of
+// the tokenizer path (it must never fail OPEN on a real pipe-to-shell). The mandatory \s+
+// separator after each \S+ keeps the quantifier linear (no catastrophic backtracking).
+const PIPE_TO_SHELL_RAW = /\|&?\s*(?:(?:\S*\/)?env\s+(?:\S+\s+)*)?(?:\S*\/)?(?:sh|bash|zsh)\b/i;
 const STARTUP_WRITE_RAW = /(?:>|\btee\b|\bsed\b|\bcp\b|\bmv\b|\binstall\b|\bln\b|\bdd\b)[^\n]*\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/;
 
 // A shell startup-file basename (leading dot) — the persistence-vector targets.
@@ -78,11 +83,18 @@ const SHELL_INTERPRETERS = new Set(['sh', 'bash', 'zsh']);
 // THREAT MODEL (unchanged): this guards ACCIDENTAL / obvious danger, not a determined
 // adversary. Operators resurrected at runtime via eval / dynamic assembly (eval
 // "$(...)", X=ba;${X}sh) are out of scope here, as they already were for the regex.
+// Pipe-to-interpreter coverage is broadened beyond a bare sh/bash/zsh word: an interpreter
+// given by path (`| /bin/bash`), with flags (`| bash -s`), or wrapped in env
+// (`| env bash`, `| /usr/bin/env -i FOO=bar bash`) is matched too — see pipeFeedsShellInterpreter.
 // KNOWN GAPS (parity with the prior regex — NOT regressions; tracked separately):
-//   - pipe target must be a bare sh/bash/zsh word; `| /bin/bash`, `| env bash`,
-//     `| bash -s` are not yet matched (a follow-on broadens interpreter coverage).
 //   - here-doc BODIES (`<<EOF … EOF`) are scanned as live text, so a dangerous-looking
 //     literal in a heredoc body can over-block (an FP, never an under-block).
+//   - only the SHELL interpreters (sh/bash/zsh) count — `| python`/`| perl`/`| node` are a
+//     different risk class, already surfaced by EGRESS_ALERTS' inline-exec patterns.
+//   - other interpreter wrappers (sudo/nohup/nice/stdbuf/command/exec/xargs before a shell)
+//     and `env -S '…'` (split-string) are out of scope — the same determined-adversary
+//     envelope as eval/dynamic assembly. The bare `env` wrapper IS handled because it is the
+//     common, accidental-looking evasion of a bare-word match.
 interface Tok { v: string; op: boolean }
 
 // Balanced "(...)" from index `from` (just past the opening paren) → inner + end index.
@@ -193,12 +205,55 @@ function isStartupFile(w: string): boolean {
   return STARTUP_BASENAME.test(base);
 }
 
-// pipe-to-shell: a real `|` operator immediately feeding a shell interpreter word.
+// Lowercased basename of a command word: `/bin/bash` → `bash`, `./sh` → `sh`, `bash` → `bash`.
+// Case-insensitive (on a case-insensitive FS like macOS, `BASH` resolves to bash).
+function cmdBasename(w: string): string {
+  return (w.split('/').pop() ?? w).toLowerCase();
+}
+function isInterpreterWord(w: string): boolean {
+  return SHELL_INTERPRETERS.has(cmdBasename(w));
+}
+
+// Starting at the word AFTER a pipe operator (index j), resolve the command the pipe feeds —
+// walking through any `env` wrapper(s) and a leading subshell/group opener — and report whether
+// it is a SHELL interpreter. Catches a bare word (`| bash`), a path form (`| /bin/bash`), flags
+// (`| bash -s`, the flags are later words so the first word already matches), a subshell/group
+// (`| (bash)`, `| { bash; }`), and env (`| env bash`, `| /usr/bin/env -i X=y bash`). env's own
+// options that take a SEPARATE argument (`-u NAME`, `-C DIR`, BSD `-P utilpath`, GNU `-a argv0`),
+// flags with no arg (`-i`, `-v`, `-0`, `-`), long `--opt=value` forms, and NAME=VALUE assignments
+// are skipped to reach the real command word; a non-interpreter, non-env word stops the walk (no
+// false positive on `| env python`, `| grep bash`, `| (grep foo; wc)`).
+// OUT OF SCOPE (determined-adversary, same envelope as eval/dynamic assembly — see the GAPS note
+// above): `env -S '…'` (split-string embeds the command in a quoted string) and space-separated
+// long-option arg forms (`env --unset FOO bash`); both are obfuscation, not accidental danger.
+const SUBSHELL_OPENERS = new Set(['(', '{']);
+function pipeFeedsShellInterpreter(toks: Tok[], j: number): boolean {
+  // skip a leading subshell `(`/process-group `{` opener: `| (bash)` / `| { bash; }` run a shell.
+  // `(` is an operator token, `{` a bare word — accept either, then resolve the inner command.
+  while (j < toks.length && SUBSHELL_OPENERS.has(toks[j].v)) j++;
+  while (j < toks.length && !toks[j].op) {
+    if (isInterpreterWord(toks[j].v)) return true;
+    if (cmdBasename(toks[j].v) !== 'env') return false;   // not an interpreter, not env → done
+    j++;                                                   // step past `env` toward its command
+    while (j < toks.length && !toks[j].op) {
+      const a = toks[j].v;
+      if (a === '-') { j++; continue; }                   // `env -` ignore-environment marker
+      if (a.startsWith('-')) {                             // an env option flag
+        if (/^-[uCPa]$/.test(a)) j++;                      // short opt taking a SEPARATE arg
+        j++; continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) { j++; continue; }  // NAME=VALUE assignment
+      break;                                               // first bare word: env's command
+    }
+    // loop re-checks toks[j] as the resolved command (could itself be another env, rare)
+  }
+  return false;
+}
+
+// pipe-to-shell: a real `|`/`|&` operator whose command resolves to a shell interpreter.
 function detectPipeToShell(toks: Tok[]): boolean {
   for (let i = 0; i < toks.length - 1; i++) {
-    // | and |& (pipe stdout, or stdout+stderr) feeding a shell interpreter. Case-
-    // insensitive: on a case-insensitive FS (macOS) `BASH` resolves to bash.
-    if (toks[i].op && (toks[i].v === '|' || toks[i].v === '|&') && !toks[i + 1].op && SHELL_INTERPRETERS.has(toks[i + 1].v.toLowerCase())) return true;
+    if (toks[i].op && (toks[i].v === '|' || toks[i].v === '|&') && pipeFeedsShellInterpreter(toks, i + 1)) return true;
   }
   return false;
 }
