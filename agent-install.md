@@ -24,19 +24,35 @@ after.** Never touch the user's default `~/.claude` config.
 **First, enumerate what already exists on the host — don't trust a shallow grep.**
 Claude profiles and their launcher aliases are frequently defined in a file the rc
 *sources* (e.g. `~/.zshrc` containing `source ~/…/aliases.sh`), so a `grep ~/.zshrc`
-alone misses most of them and you'll under-count. Build the full picture first:
+alone misses most of them and you'll under-count.
 
-- **Profiles:** `ls -d ~/.claude*/ 2>/dev/null` — every isolated config dir, not just
-  `~/.claude`.
-- **Aliases — resolve them through the rc's *entire* `source`/`.` chain**, not just the
-  top rc file. The kit already does this correctly: source this repo's
-  `shared/lib/common.sh` and, for each candidate name, call
-  `alias_target_elsewhere <name> "$(detect_shell_rc)"` — it walks the whole source
-  graph (cycle-safe), expands `$VAR`/`${VAR}` and `~`/`$HOME`, returns the profile the
-  alias resolves to (or `OTHER` for a non-launcher alias, empty if undefined). To list
-  *every* launcher alias, walk that same chain — start at `detect_shell_rc`, follow each
-  `source`/`.` it transitively includes (`sourced_paths` gives one hop), and grep each
-  file for `alias …CLAUDE_CONFIG_DIR…`.
+**Run the engine — don't hand-roll the walk:**
+
+```
+./install.sh --enumerate
+```
+
+It emits the full picture as JSON — every `~/.claude*/` profile, whether each is
+kit-managed, and the launcher aliases that resolve to it through the rc's **entire**
+`source`/`.` chain (cycle-safe; `$VAR`/`${VAR}` and `~`/`$HOME` expanded):
+
+```json
+{ "rc": "/…/.zshrc",
+  "profiles": [ { "dir": "/…/.claude-aka", "managed": true, "aliases": ["aka"] }, … ],
+  "unresolved_aliases": [ { "name": "old", "target": "/…/.claude-gone" } ] }
+```
+
+`managed` is true when the profile carries `.aka-claude-tools-meta` **or** registers a
+kit hook — the same Step-1 signal below. `unresolved_aliases` are launchers whose target
+isn't an existing profile (dangling, or a var path that didn't resolve) — worth a look.
+
+> **Why the engine, not an inline script:** the resolution helpers in
+> `shared/lib/common.sh` are bash-only; sourced into a tool shell that runs zsh they
+> return **empty** and you'll silently under-count and miss an alias collision.
+> `install.sh` runs under bash, so `--enumerate` is reliable regardless of your shell.
+> (If you must go manual, run it under `bash`: `alias_target_elsewhere <name>
+> "$(detect_shell_rc)"` resolves one name; `rc_source_chain "$(detect_shell_rc)"` lists
+> every file in the source graph to grep for `alias …CLAUDE_CONFIG_DIR…`.)
 
 Present the user the full profile↔alias map you found, so the next choices are informed.
 

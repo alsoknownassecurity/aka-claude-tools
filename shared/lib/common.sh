@@ -380,24 +380,58 @@ alias_target_elsewhere() {
   done
   local def; def="$(grep -hE "^[[:space:]]*alias[[:space:]]+${name}=" "${files[@]}" 2>/dev/null | tail -1)"
   if [ -z "$def" ]; then rm -f "$stripped"; return 0; fi
+  # files[] still includes $stripped here, so resolve (var expansion reads the graph)
+  # BEFORE removing the temp. _alias_resolve_target is the SHARED parser — also used
+  # by enumerate_entry's whole-surface scan — so the two can never disagree on how an
+  # alias body resolves to a profile dir.
+  local out; out="$(_alias_resolve_target "$def" "${files[@]}")"
+  rm -f "$stripped"
+  printf '%s\n' "$out"
+}
+
+# _alias_resolve_target ALIAS_LINE FILE... — given a matched `alias NAME=…` line and
+# the rc source-graph files (for $VAR resolution), print the CLAUDE_CONFIG_DIR it
+# launches (expanded), or "OTHER" if the body carries no CLAUDE_CONFIG_DIR. Empty if
+# the line is empty. Extracted verbatim from alias_target_elsewhere so both the
+# single-name resolver and the --enumerate whole-surface scan share one code path.
+_alias_resolve_target() {
+  local def="$1"; shift
+  [ -z "$def" ] && return 0
   # Everything after the first CLAUDE_CONFIG_DIR= in the alias body. If there is no
   # such assignment the alias exists but isn't a Claude-config launcher → OTHER.
   local raw; raw="${def#*CLAUDE_CONFIG_DIR=}"
-  if [ "$raw" = "$def" ]; then rm -f "$stripped"; printf 'OTHER\n'; return 0; fi
+  if [ "$raw" = "$def" ]; then printf 'OTHER\n'; return 0; fi
   # Unescape backslash-escaped quotes/$ from a double-quoted alias body, e.g.
   #   alias x="… CLAUDE_CONFIG_DIR=\"\$HOME/.claude-x\" …"
   # whose extracted RHS arrives as \"\$HOME/.claude-x\" and otherwise mis-parses.
   raw="$(printf '%s' "$raw" | sed -e 's/\\\(["'"'"'$]\)/\1/g')"
   local t; t="$(_rc_unquote "$raw")"
-  if [ -z "$t" ]; then rm -f "$stripped"; printf 'OTHER\n'; return 0; fi
-  # Resolve $VAR/${VAR} from the rc source graph (e.g. a fleet alias that uses
-  # CLAUDE_CONFIG_DIR="$CC_FLEET_DIR"), then HOME/ZDOTDIR. files[] still includes
-  # $stripped here, so keep the temp until var expansion is done.
-  t="$(_expand_rc_vars "$t" "${files[@]}")"
-  rm -f "$stripped"
+  if [ -z "$t" ]; then printf 'OTHER\n'; return 0; fi
+  # Resolve $VAR/${VAR} from the rc source graph, then HOME/ZDOTDIR.
+  t="$(_expand_rc_vars "$t" "$@")"
   t="${t/#\~/$HOME}"; t="${t//\$HOME/$HOME}"; t="${t//\$\{HOME\}/$HOME}"
   t="${t//\$ZDOTDIR/${ZDOTDIR:-$HOME}}"; t="${t//\$\{ZDOTDIR\}/${ZDOTDIR:-$HOME}}"
   printf '%s\n' "$t"
+}
+
+# rc_source_chain RC — print RC and every file reachable through its source/. chain
+# (transitive, cycle-safe), one per line. The whole-surface analogue of the BFS that
+# alias_target_elsewhere walks for a single name: enumerate_entry greps these files
+# for every launcher alias. Index walk, set -u safe.
+rc_source_chain() {
+  local rc="$1"
+  [ -f "$rc" ] || return 0
+  local queue=("$rc") seen=" " cur kid i=0
+  while [ "$i" -lt "${#queue[@]}" ]; do
+    cur="${queue[$i]}"; i=$((i + 1))
+    case "$seen" in *" $cur "*) continue ;; esac
+    seen="$seen$cur "
+    printf '%s\n' "$cur"
+    while IFS= read -r kid; do
+      case "$seen" in *" $kid "*) continue ;; esac
+      queue+=("$kid")
+    done < <(sourced_paths "$cur")
+  done
 }
 
 # ── legacy pre-marker hook migration (shared by install.sh + hook-rename.sh) ──

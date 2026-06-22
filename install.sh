@@ -65,12 +65,14 @@ source "$REPO_DIR/shared/lib/common.sh"
 SEED_AUTH=1
 CT_APPLY=0
 CT_ALIAS_MODE=0
+CT_ENUMERATE=0
 for arg in "$@"; do
   case "$arg" in
     --defaults)        export CT_NONINTERACTIVE=1 ;;
     --no-auth-inherit) SEED_AUTH=0 ;;
     --apply)           CT_APPLY=1; export CT_NONINTERACTIVE=1 ;;
     --alias)           CT_ALIAS_MODE=1; export CT_NONINTERACTIVE=1 ;;
+    --enumerate)       CT_ENUMERATE=1; export CT_NONINTERACTIVE=1 ;;
   esac
 done
 
@@ -80,7 +82,7 @@ done
 ensure_dep jq "jq (required)" 1
 # The claude-CLI check and the banner are installer chrome — skip them in --apply
 # (engine) mode, which is invoked programmatically and only needs jq.
-if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ]; then
+if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ] && [ "$CT_ENUMERATE" != "1" ]; then
   command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
   # bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
   # additions are selected — see the build step below.
@@ -1050,6 +1052,64 @@ alias_entry() {
   setup_alias "$config_dir" "$CT_ALIAS" strict
 }
 
+# ── --enumerate entry: the host's profile↔alias map as JSON, for Path A ─────────
+# agent-install Step 1 needs the FULL picture before choosing a target: every
+# ~/.claude*/ profile, whether each is kit-managed, and which launcher aliases
+# resolve to it — resolved through the rc's ENTIRE source/. chain (a fleet aliases
+# file the rc sources is where most launchers live, so a shallow `grep ~/.zshrc`
+# under-counts). This runs that walk deterministically under bash (the helpers are
+# bash-only; sourcing common.sh into the agent's zsh tool returns empty and silently
+# under-counts), and emits machine-readable JSON the agent parses instead of
+# re-implementing the graph walk in prose. Read-only: inspects files, writes nothing.
+enumerate_entry() {
+  local rc; rc="$(detect_shell_rc)"
+  local -a files=()
+  while IFS= read -r f; do [ -n "$f" ] && files+=("$f"); done < <(rc_source_chain "$rc")
+
+  # Discover launcher alias NAMES across the whole chain — alias lines whose body
+  # carries CLAUDE_CONFIG_DIR (a commented `# alias …` can't match: ^[:space:]*alias).
+  # `|| true`: grep exits 1 on no match → under set -e + pipefail a bare command-sub
+  # would abort the whole enumerate on an rc with zero launcher aliases (a legit case).
+  local names=""
+  if [ "${#files[@]}" -gt 0 ]; then
+    names="$(grep -hE '^[[:space:]]*alias[[:space:]]+[A-Za-z0-9_.-]+=.*CLAUDE_CONFIG_DIR' "${files[@]}" 2>/dev/null \
+      | sed -E 's/^[[:space:]]*alias[[:space:]]+([A-Za-z0-9_.-]+)=.*/\1/' | sort -u || true)"
+  fi
+
+  # Resolve each name to its target dir via the SHARED parser (last definition in
+  # chain order wins, mirroring runtime). Build [{name,target}].
+  local alias_json="[]" name def target
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    def="$(grep -hE "^[[:space:]]*alias[[:space:]]+${name}=" "${files[@]}" 2>/dev/null | tail -1 || true)"
+    target="$(_alias_resolve_target "$def" "${files[@]}")"
+    alias_json="$(jq -c --arg n "$name" --arg t "$target" '. + [{name:$n,target:$t}]' <<<"$alias_json")"
+  done <<EOF
+$names
+EOF
+
+  # Enumerate existing ~/.claude*/ profiles + kit-managed status (the SAME two signals
+  # agent-install Step 1 documents: the marker file OR a recognized kit hook).
+  local prof_json="[]" d managed
+  for d in "$HOME"/.claude*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    managed=false
+    if [ -f "$d/.aka-claude-tools-meta" ]; then managed=true
+    elif [ -f "$d/settings.json" ] && grep -qE 'command-guard\.ts|leak-guard\.sh' "$d/settings.json" 2>/dev/null; then managed=true; fi
+    prof_json="$(jq -c --arg d "$d" --argjson m "$managed" '. + [{dir:$d,managed:$m}]' <<<"$prof_json")"
+  done
+
+  # Join: each profile carries the aliases resolving to it; launcher aliases whose
+  # target is no existing profile (dangling, or an external/var path) are surfaced
+  # separately so the agent sees them too.
+  jq -n --arg rc "$rc" --argjson aliases "$alias_json" --argjson profiles "$prof_json" '
+    ($profiles | map(.dir)) as $pdirs
+    | { rc: $rc,
+        profiles: [ $profiles[] as $p | $p + { aliases: [ $aliases[] | select(.target == $p.dir) | .name ] } ],
+        unresolved_aliases: [ $aliases[] | select(.target as $t | ($pdirs | index($t)) | not) ] }'
+}
+
 # Run the installer only when EXECUTED, not when SOURCED. Sourcing the script (with
 # its top-level definitions) lets the test suite reach the pure helpers above
 # (merge_settings, prune_hook_regs, setup_alias, …) without performing an install.
@@ -1058,5 +1118,6 @@ alias_entry() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if   [ "$CT_APPLY" = "1" ];      then apply_entry
   elif [ "$CT_ALIAS_MODE" = "1" ]; then alias_entry
+  elif [ "$CT_ENUMERATE" = "1" ];  then enumerate_entry
   else ct_main; fi
 fi
