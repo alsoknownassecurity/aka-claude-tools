@@ -32,6 +32,10 @@ hygiene**, **git drift**.
   launcher alias whose target dir is missing.
 - **Git drift** — confirm each change is the user's. A modified-vs-HEAD or
   untracked startup file is the strongest tamper signal available here.
+- **Partial coverage** — if the run prints "COVERAGE IS PARTIAL", a `source` line
+  used a variable the auditor couldn't resolve without running the shell (e.g.
+  `source "$DOTFILES/x"`); that file was **not** audited. Surface it and offer to
+  re-run pointed at the resolved path.
 - **State the scope limit** every time: this covers the *shell-startup slice
   only* — not launchd/LaunchAgents, cron, login items, ssh authorized_keys/config,
   or git hooks. Don't present it as comprehensive persistence detection.
