@@ -416,7 +416,7 @@ setup_alias() {
     if [ -n "$newalias" ]; then
       write_managed_block "$rc" "$newalias" \
 "alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-      printf 'alias=%s\n' "$newalias" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+      meta_set "$config_dir" alias "$newalias"
       ok "Aliased ${C_BOLD}${newalias}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
       say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${newalias}${C_RST}"
     else
@@ -426,7 +426,7 @@ setup_alias() {
   else
     write_managed_block "$rc" "$alias_name" \
 "alias ${alias_name}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
-    printf 'alias=%s\n' "$alias_name" > "$config_dir/.aka-claude-tools-meta" 2>/dev/null || true
+    meta_set "$config_dir" alias "$alias_name"
     ok "Aliased ${C_BOLD}${alias_name}${C_RST} → $config_dir  ${C_DIM}(in $rc)${C_RST}"
     say "  ${C_DIM}Open a new shell (or: source $rc), then run:${C_RST}  ${C_BOLD}${alias_name}${C_RST}"
     return 0
@@ -569,6 +569,21 @@ compile_org_sidecar() {
   jq -n --arg p "$pat" --arg h "$hash" '{pattern:$p, sourceHash:$h}' > "$tmp" && mv -f "$tmp" "$sidecar"
   if [ -n "$pat" ]; then ok "Compiled org-egress sidecar (CT_EGRESS_PATTERNS active)";
   else ok "Compiled org-egress sidecar (no org patterns set — tier inactive)"; fi
+}
+
+# meta_set <config_dir> <key> <value>  — upsert key=value into
+# <config_dir>/.aka-claude-tools-meta, creating the file if absent and preserving
+# any other key lines. This file MARKS a profile as aka-claude-tools-managed
+# (the agent-install Step-1 detection signal). Stamped by --apply (managed=…) so
+# EVERY kit-installed profile is detectable, even a minimal selection that registers
+# none of the recognizable kit hooks; updated by --alias (alias=…). set -e safe.
+meta_set() {
+  local dir="$1" key="$2" val="$3"
+  local f="$dir/.aka-claude-tools-meta" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/aka-meta.XXXXXX" 2>/dev/null)" || return 0
+  if [ -f "$f" ]; then grep -vE "^${key}=" "$f" 2>/dev/null > "$tmp" || true; fi
+  printf '%s=%s\n' "$key" "$val" >> "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  mv "$tmp" "$f" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
 }
 
 # ── deterministic engine: layer additions onto a config dir ──────────────────
@@ -974,6 +989,11 @@ apply_additions() {
     warn "This profile's settings.json enables bypassPermissions and/or the skip-prompt flags —"
     warn "Claude runs without permission prompts, so the kit's deny rules are NOT enforced while they are set."
   fi
+
+  # Mark this profile as aka-claude-tools-managed so agent-install Step-1 detection
+  # recognizes it even when the selection registered none of the named kit hooks
+  # (e.g. secure-settings + statusline only). Preserves any alias= line --alias wrote.
+  meta_set "$config_dir" managed aka-claude-tools
 
   # tidy empty dirs
   rmdir "$config_dir/hooks" "$config_dir/commands" "$config_dir/workflows" 2>/dev/null || true
