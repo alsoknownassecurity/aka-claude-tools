@@ -154,6 +154,69 @@ prune_hook_regs() {
     else . end'
 }
 
+# prune_hook_regs_resolving <config_dir> <add-json>  (settings on stdin → stdout)
+# Remove EXISTING hook registrations that are the same LOGICAL registration as one the
+# kit adds this run (<add-json>), differing ONLY in path SPELLING — so the union doesn't
+# leave both. "Same logical registration" = same hook EVENT + same MATCHER + a
+# BYTE-IDENTICAL command after normalization (expand $HOME / ${HOME} / $CLAUDE_CONFIG_DIR /
+# ${CLAUDE_CONFIG_DIR} / ~, strip quotes, collapse whitespace).
+#
+# Two gates make this surgical, both protecting deliberate user customization the union
+# preserves by design (see the install-merge contract):
+#   • MATCHER — a user who re-scoped a kit hook's matcher (e.g. leak-guard on "WebFetch"
+#     not the kit's "WebSearch|WebFetch") keeps it: different matcher ≠ same logical reg.
+#   • FULL-COMMAND EQUALITY (not just same file) — a user who AUGMENTED the kit invocation
+#     (e.g. `…/x.sh --extra-flag`, an env prefix, a custom bun path) keeps it: the
+#     normalized commands differ, so it is not a spelling-dup and is left untouched.
+# Only a pure re-spelling of the IDENTICAL command (a converted foreign profile's
+# `$HOME/.claude-x/hooks/harness-pointer.sh` vs the kit's single-quoted absolute form)
+# normalizes equal and is collapsed — unique_by(tojson) in the union can't catch it
+# because the raw strings differ. A user's own non-kit hook never matches. Idempotent.
+# Type-robust: a non-string/array .command yields "" (no crash under set -euo pipefail);
+# per-hook (a sibling hook in the same entry object is kept); emptied entries are dropped.
+prune_hook_regs_resolving() {
+  local cfg="$1" add="$2"
+  jq --arg home "$HOME" --arg cfg "$cfg" --argjson add "$add" '
+    # ncmd COMMAND → the fully-normalized command string (or "" for a non-string/array,
+    # so a malformed object .command never reaches gsub and aborts the run). Array argv
+    # is space-joined; $HOME/$CLAUDE_CONFIG_DIR/~ expanded; quotes stripped; whitespace
+    # collapsed+trimmed so spelling differences ('"'"'dir'"'"'/x vs $HOME/x) normalize equal
+    # while a genuine arg/flag/prefix difference stays distinct.
+    def ncmd:
+      ( if type=="string" then . elif type=="array" then ([ .[] | select(type=="string") ] | join(" ")) else "" end )
+      | gsub("\\$\\{HOME\\}"; $home) | gsub("\\$HOME"; $home)
+      | gsub("\\$\\{CLAUDE_CONFIG_DIR\\}"; $cfg) | gsub("\\$CLAUDE_CONFIG_DIR"; $cfg)
+      | gsub("~/"; ($home + "/")) | gsub("['"'"'\"]"; "")
+      | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "");
+    # (event, matcher, normalized-command) tuples the kit registers this run.
+    ( [ ($add.hooks // {}) | to_entries[] | .key as $e | .value[]? as $r
+        | ($r.hooks // [])[]? | (.command | ncmd) as $c | select($c != "")
+        | {e:$e, m:($r.matcher // ""), c:$c} ] ) as $kit
+    | if (.hooks|type)=="object" then
+        (.hooks |= ( to_entries
+          | map( .key as $ev
+                 | .value |= ( if type=="array" then
+                     # PER-HOOK prune: within each entry object, drop ONLY the individual
+                     # hook(s) that normalize byte-equal to a kit reg of the same
+                     # event+matcher — a sibling user hook in the SAME object is kept.
+                     ( map( if type=="object" then
+                              (.matcher // "") as $m
+                              | .hooks = ( (.hooks // []) | map( select(
+                                  ( (type=="object")
+                                    and ( (.command | ncmd) as $c
+                                          | ($kit | any(.e==$ev and .m==$m and .c==$c)) )
+                                  ) | not ) ) )
+                            else . end )
+                       # drop object entries we emptied (all hooks were kit-dups); keep
+                       # non-objects and entries that still have hooks.
+                       | map( select( (type=="object" and ((.hooks // []) | length == 0)) | not ) ) )
+                     else . end ) )
+          | map(select((.value|type)=="array" and (.value|length) > 0))
+          | from_entries ))
+        | (if (.hooks // {}) == {} then del(.hooks) else . end)
+      else . end'
+}
+
 # Drop the kit's .statusLine on deselect — identified by its command END-ANCHORED on
 # $1 (the kit always writes "<cfg>/hooks/statusline.sh", no trailing args) — and if a
 # user's own prior statusLine was stashed when the addition was installed (see the
@@ -949,6 +1012,19 @@ apply_additions() {
     for _lh in "${_legacy_files_to_delete[@]}"; do cp "$_lh" "$_bdir/"; done
     [ "$existing" != "{}" ] && existing="$(printf '%s' "$existing" | legacy_prune_regs "$config_dir")"
     ok "Cleaning up ${#_legacy_files_to_delete[@]} legacy pre-marker hook(s) — backed up to ${_bdir/#$HOME/~}"
+  fi
+
+  # 4d-pre4. De-dup kit hook registrations by RESOLVED TARGET. The union (merge_settings)
+  # dedups by exact command string, so an existing reg pointing at a kit hook with a
+  # different path SPELLING than the canonical one the kit adds in `add` (e.g. a converted
+  # foreign profile holding `$HOME/.claude-x/hooks/harness-pointer.sh` vs the kit's
+  # single-quoted absolute form) survives ALONGSIDE the canonical reg and the hook
+  # double-fires. Pass `add` (data-driven — exactly what was registered this run) and prune
+  # any existing reg that is the same LOGICAL registration (event + matcher + resolved hook
+  # file); the union then re-adds the single canonical one. Matcher-gated, so a user's
+  # deliberate matcher tweak on a kit hook is preserved (see the helper).
+  if [ "$existing" != "{}" ] && [ "$add" != "{}" ]; then
+    existing="$(printf '%s' "$existing" | prune_hook_regs_resolving "$config_dir" "$add")"
   fi
 
   # Reconcile kit-managed permission rules first: a plain merge only UNIONS, so it
