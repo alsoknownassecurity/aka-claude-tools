@@ -21,12 +21,43 @@ after.** Never touch the user's default `~/.claude` config.
 
 ## 1. Gather preferences — ask the user; use the defaults only as fallback
 
+**First, enumerate what already exists on the host — don't trust a shallow grep.**
+Claude profiles and their launcher aliases are frequently defined in a file the rc
+*sources* (e.g. `~/.zshrc` containing `source ~/…/aliases.sh`), so a `grep ~/.zshrc`
+alone misses most of them and you'll under-count. Build the full picture first:
+
+- **Profiles:** `ls -d ~/.claude*/ 2>/dev/null` — every isolated config dir, not just
+  `~/.claude`.
+- **Aliases — resolve them through the rc's *entire* `source`/`.` chain**, not just the
+  top rc file. The kit already does this correctly: source this repo's
+  `shared/lib/common.sh` and, for each candidate name, call
+  `alias_target_elsewhere <name> "$(detect_shell_rc)"` — it walks the whole source
+  graph (cycle-safe), expands `$VAR`/`${VAR}` and `~`/`$HOME`, returns the profile the
+  alias resolves to (or `OTHER` for a non-launcher alias, empty if undefined). To list
+  *every* launcher alias, walk that same chain — start at `detect_shell_rc`, follow each
+  `source`/`.` it transitively includes (`sourced_paths` gives one hop), and grep each
+  file for `alias …CLAUDE_CONFIG_DIR…`.
+
+Present the user the full profile↔alias map you found, so the next choices are informed.
+
 Always let the user choose the folder and alias. Only apply a default if they
 don't specify one:
 
 - **Config folder name** — default `~/.claude-aka`
 - **Alias** — default `aka` (if the user picks a custom folder, suggest the
   basename minus `.claude-`, e.g. `~/.claude-work` → `work`)
+- **If the folder you'd target already exists as an aka-managed profile, this is an
+  UPGRADE — but say so and offer the alternative; never silently default to
+  upgrade-in-place.** A profile is aka-managed if it carries a
+  `.aka-claude-tools-meta` file or its `settings.json` registers kit hooks (e.g. a
+  `command` ending in `/hooks/command-guard.ts` or `/hooks/leak-guard.sh`). When you
+  detect one, tell the user plainly — e.g. "`~/.claude-aka` already exists (an older
+  aka-claude-tools version); I can **upgrade it in place**, or set up a **new isolated
+  profile** in a different folder with its own alias" — and let them pick. Upgrading
+  re-runs `--apply` to layer the current additions onto the existing dir (idempotent;
+  reconciles retired permissions, re-registers renamed hooks). A new profile is a fresh
+  folder + a new alias (suggest a basename-derived alias that isn't already taken — use
+  the enumeration above to avoid a collision).
 - The user may instead target their **default `~/.claude`** to rebuild it clean:
   move it to a timestamped backup (`~/.claude.backup-…`), recreate it with the
   selected additions, and migrate their picks from the backup. Skip the alias

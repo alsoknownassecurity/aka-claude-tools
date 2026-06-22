@@ -277,6 +277,76 @@ sourced_paths() {
   done < <(grep -hE '^[[:space:]]*(source|\.)[[:space:]]+' "$src" 2>/dev/null | sed -E 's/^[[:space:]]*(source|\.)[[:space:]]+//')
 }
 
+# _rc_unquote VALUE — strip ONE layer of surrounding single/double quotes, or, for
+# an unquoted token, cut at the first whitespace. Used for both an alias body and a
+# variable assignment's RHS.
+_rc_unquote() {
+  local v="$1"
+  case "$v" in
+    \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+    \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+    *)   v="${v%%[[:space:]]*}" ;;
+  esac
+  printf '%s' "$v"
+}
+
+# _lookup_rc_var NAME RC CHILD... — best-effort resolve a shell variable's value from
+# assignments in the rc source graph, WITHOUT eval. Precedence:
+#   1. a direct assignment (`export VAR=…` / `VAR=…`) in the TOP-LEVEL rc ($2) — the
+#      user's own file is authoritative, so it wins regardless of where a `source`
+#      sits relative to it (we can't model true cross-file execution order from a flat
+#      grep, and the parent rc is where a user overrides a sourced default);
+#   2. else a direct assignment anywhere in the source graph (last in file order);
+#   3. else a `: "${VAR:=default}"` conditional default.
+# Empty if the variable isn't assigned anywhere we can see. NOTE: this is a best-effort
+# parser, not a shell — a var re-assigned by a sourced CHILD after the parent (rare)
+# is not modeled beyond rule 1; the detector errs safe (a mis-resolved target only
+# changes dedup-vs-alternate-name, never overwrites a user's alias).
+_lookup_rc_var() {
+  local name="$1"; shift
+  local rc="$1"
+  local direct val=""
+  direct="$(grep -hE "^[[:space:]]*(export[[:space:]]+)?${name}=" "$rc" 2>/dev/null | tail -1)"
+  [ -z "$direct" ] && direct="$(grep -hE "^[[:space:]]*(export[[:space:]]+)?${name}=" "$@" 2>/dev/null | tail -1)"
+  if [ -n "$direct" ]; then
+    val="${direct#*${name}=}"
+    val="$(_rc_unquote "$val")"
+  else
+    local defln
+    defln="$(grep -hE ":[[:space:]]+[\"']?\\\$\{${name}:=" "$@" 2>/dev/null | tail -1)"
+    [ -n "$defln" ] && val="$(printf '%s' "$defln" | sed -n "s/.*\${${name}:=\\([^}]*\\)}.*/\\1/p")"
+  fi
+  printf '%s' "$val"
+}
+
+# _expand_rc_vars STRING FILE... — substitute $VAR / ${VAR} references in STRING with
+# their values resolved from the rc source graph (best-effort, no eval). HOME/ZDOTDIR
+# are left for the caller's dedicated expansion. A few passes resolve simple nesting
+# (e.g. CC_FLEET_DIR="$HOME/.claude-clean"); unresolved references are left intact.
+_expand_rc_vars() {
+  local s="$1"; shift
+  local pass name names changed
+  for pass in 1 2 3; do
+    case "$s" in *'$'*) ;; *) break ;; esac
+    # Longest name first: the bare `$VAR` form is a substring replace, so a name that
+    # is a prefix of another ($CC vs $CC_FLEET_DIR) must be substituted AFTER the
+    # longer one or it would clobber its prefix. awk/sort/cut are all BSD+GNU-portable.
+    names="$(printf '%s' "$s" | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*' | sed -E 's/[$ {}]//g' | sort -u | awk '{ print length($0), $0 }' | sort -k1,1nr | awk '{ print $2 }')"
+    changed=0
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      case "$name" in HOME|ZDOTDIR) continue ;; esac
+      local val; val="$(_lookup_rc_var "$name" "$@")"
+      [ -z "$val" ] && continue
+      s="${s//\$\{$name\}/$val}"; s="${s//\$$name/$val}"; changed=1
+    done <<EOF
+$names
+EOF
+    [ "$changed" = "0" ] && break
+  done
+  printf '%s' "$s"
+}
+
 # alias_target_elsewhere NAME RC — if alias NAME is already defined OUTSIDE our
 # own managed block — in RC or ANY file reachable through its `source` chain
 # (fully recursive) — print the CLAUDE_CONFIG_DIR it resolves to (expanded), or
@@ -309,11 +379,24 @@ alias_target_elsewhere() {
     done < <(sourced_paths "$cur")
   done
   local def; def="$(grep -hE "^[[:space:]]*alias[[:space:]]+${name}=" "${files[@]}" 2>/dev/null | tail -1)"
+  if [ -z "$def" ]; then rm -f "$stripped"; return 0; fi
+  # Everything after the first CLAUDE_CONFIG_DIR= in the alias body. If there is no
+  # such assignment the alias exists but isn't a Claude-config launcher → OTHER.
+  local raw; raw="${def#*CLAUDE_CONFIG_DIR=}"
+  if [ "$raw" = "$def" ]; then rm -f "$stripped"; printf 'OTHER\n'; return 0; fi
+  # Unescape backslash-escaped quotes/$ from a double-quoted alias body, e.g.
+  #   alias x="… CLAUDE_CONFIG_DIR=\"\$HOME/.claude-x\" …"
+  # whose extracted RHS arrives as \"\$HOME/.claude-x\" and otherwise mis-parses.
+  raw="$(printf '%s' "$raw" | sed -e 's/\\\(["'"'"'$]\)/\1/g')"
+  local t; t="$(_rc_unquote "$raw")"
+  if [ -z "$t" ]; then rm -f "$stripped"; printf 'OTHER\n'; return 0; fi
+  # Resolve $VAR/${VAR} from the rc source graph (e.g. a fleet alias that uses
+  # CLAUDE_CONFIG_DIR="$CC_FLEET_DIR"), then HOME/ZDOTDIR. files[] still includes
+  # $stripped here, so keep the temp until var expansion is done.
+  t="$(_expand_rc_vars "$t" "${files[@]}")"
   rm -f "$stripped"
-  [ -z "$def" ] && return 0
-  local t; t="$(printf '%s\n' "$def" | sed -n 's/.*CLAUDE_CONFIG_DIR=//p' | sed "s/^[\"']//; s/[\"'].*$//")"
-  if [ -z "$t" ]; then printf 'OTHER\n'; return 0; fi
   t="${t/#\~/$HOME}"; t="${t//\$HOME/$HOME}"; t="${t//\$\{HOME\}/$HOME}"
+  t="${t//\$ZDOTDIR/${ZDOTDIR:-$HOME}}"; t="${t//\$\{ZDOTDIR\}/${ZDOTDIR:-$HOME}}"
   printf '%s\n' "$t"
 }
 
