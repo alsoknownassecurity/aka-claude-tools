@@ -84,8 +84,16 @@ assert_nlit "jq absent: no alias block written to rc" \
   ">>> aka-claude-tools managed: aka" "$RC1"
 
 # ════════════════════════════════════════════════════════════════════════════
-# CASE 2 — bun ABSENT (jq present) → command-guard skipped, rest installs (graceful)
+# CASE 2 — bun ABSENT (jq present). bun is a HARD dependency of command-guard (a
+# default-on SECURITY hook), so the contract is SELECTION-dependent:
+#   2a) command-guard SELECTED   → bun required → install ABORTS, fail-closed.
+#   2b) command-guard DESELECTED → bun not needed → install SUCCEEDS.
+# (No soft-skip: shipping a default-on security guard silently disabled is worse
+# than a failed install. leak-guard still carries pipe-to-shell in this PR, so a
+# leak-guard-only selection is fully protected WITHOUT bun.)
 # ════════════════════════════════════════════════════════════════════════════
+
+# ── 2a: command-guard selected + bun absent → abort, fail-closed ─────────────
 SB2="$(sandbox)"
 RC2="$SB2/.bashrc"; touch "$RC2"
 PROFILE2="$SB2/.claude-aka"
@@ -99,49 +107,58 @@ assert_ok   "jq IS reachable on the bun-omitted stub PATH" \
 assert_fail "bun is unreachable on the bun-omitted stub PATH" \
   env -i PATH="$STUB2" bash -c 'command -v bun'
 
-# Select command-guard PLUS a representative non-bun addition set, so we can prove
-# command-guard alone is dropped while the rest survives. (CT_ADDITIONS bypasses the
-# /dev/tty menu — the only way to drive a deterministic non-interactive selection.)
-SEL2="secure-settings leak-guard command-guard wrap-up shell-audit"
-env -i PATH="$STUB2" HOME="$SB2" SHELL=/bin/bash CT_ADDITIONS="$SEL2" \
+SEL2A="secure-settings leak-guard command-guard wrap-up"
+env -i PATH="$STUB2" HOME="$SB2" SHELL=/bin/bash CT_ADDITIONS="$SEL2A" \
   bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$out2" 2>&1
-rc2=$?
+rc2a=$?
 
-assert_ok   "bun absent: install still exits 0 (graceful degradation)" \
-  bash -c "[ '$rc2' -eq 0 ]"
-assert_file "bun absent: profile dir created" "$PROFILE2"
-assert_grep "bun absent: install reported done" 'Done|ready' "$out2"
-assert_ok   "bun absent: settings.json is valid JSON" jq -e . "$PROFILE2/settings.json"
-
-# ── command-guard is dropped LOUDLY ─────────────────────────────────────────────
-S2="$PROFILE2/settings.json"
-# The .ts artifact must NOT be placed when its runtime is missing.
-[ -e "$PROFILE2/hooks/command-guard.ts" ] \
-  && fail "bun absent: command-guard.ts NOT placed" "it exists" \
-  || pass "bun absent: command-guard.ts NOT placed"
-# command-guard must NOT be registered in settings hooks.
-assert_ok   "bun absent: command-guard NOT registered in PreToolUse" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(.[]; test(\"command-guard\")) | not' '$S2' >/dev/null"
-# The skip must be EXPLICIT (loud warning), not silent.
-assert_grep "bun absent: warns command-guard NOT enabled" \
-  'command-guard NOT enabled|bun.*missing|missing.*bun' "$out2"
-
-# ── the rest of the install is unaffected ────────────────────────────────────
-# secure-settings denies were merged.
-assert_ok   "bun absent: kit denies still merged (secure-settings unaffected)" \
-  bash -c "jq -e '((.permissions.deny // []) | length) > 0' '$S2' >/dev/null"
-# leak-guard (a non-bun hook) still placed AND registered.
-assert_file "bun absent: leak-guard.sh still placed" "$PROFILE2/hooks/leak-guard.sh"
-assert_ok   "bun absent: leak-guard still registered" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(.[]; test(\"leak-guard.sh\"))' '$S2' >/dev/null"
-# wrap-up command + shell-audit skill still placed.
-assert_file "bun absent: wrap-up.md still placed"     "$PROFILE2/commands/wrap-up.md"
-assert_file "bun absent: shell-audit skill placed"    "$PROFILE2/skills/shell-audit"
-# alias block still written (install completed).
-assert_lit  "bun absent: managed alias block written to rc" \
+assert_ok   "bun absent + command-guard selected: install exits NON-zero (aborted)" \
+  bash -c "[ '$rc2a' -ne 0 ]"
+assert_grep "bun absent (selected): reports bun is required (not a silent skip)" \
+  'bun.*required|required.*bun' "$out2"
+assert_grep "bun absent (selected): gives an install instruction" \
+  'Install it first|install manually|install via|bun.sh|brew|re-run' "$out2"
+# FAIL CLOSED: the gate runs before the build mkdir, so no profile dir / no rc block.
+[ -e "$PROFILE2" ] && fail "bun absent (selected): profile dir NOT created" "it exists at $PROFILE2" \
+                   || pass "bun absent (selected): profile dir NOT created"
+assert_nlit "bun absent (selected): no alias block written to rc" \
   ">>> aka-claude-tools managed: aka" "$RC2"
+
+# ── 2b: command-guard NOT selected + bun absent → success (bun not needed) ────
+SB2B="$(sandbox)"
+RC2B="$SB2B/.bashrc"; touch "$RC2B"
+PROFILE2B="$SB2B/.claude-aka"
+STUB2B="$SB2B/stubbin"
+make_stub_path "$STUB2B" bun
+out2b="$SB2B/install.log"
+S2B="$PROFILE2B/settings.json"
+
+SEL2B="secure-settings leak-guard wrap-up shell-audit"
+env -i PATH="$STUB2B" HOME="$SB2B" SHELL=/bin/bash CT_ADDITIONS="$SEL2B" \
+  bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$out2b" 2>&1
+rc2b=$?
+
+assert_ok   "bun absent + command-guard NOT selected: install exits 0" \
+  bash -c "[ '$rc2b' -eq 0 ]"
+assert_file "bun absent (deselected): profile dir created" "$PROFILE2B"
+assert_ok   "bun absent (deselected): settings.json is valid JSON" jq -e . "$S2B"
+# command-guard is absent because not selected — and crucially NOT required.
+[ -e "$PROFILE2B/hooks/command-guard.ts" ] \
+  && fail "bun absent (deselected): command-guard.ts NOT placed" "it exists" \
+  || pass "bun absent (deselected): command-guard.ts NOT placed"
+# leak-guard (selected, non-bun) still placed AND registered — fully protected.
+assert_file "bun absent (deselected): leak-guard.sh still placed" "$PROFILE2B/hooks/leak-guard.sh"
+assert_ok   "bun absent (deselected): leak-guard registered" \
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(.[]; test(\"leak-guard.sh\"))' '$S2B' >/dev/null"
+# the rest of the install is unaffected.
+assert_ok   "bun absent (deselected): kit denies still merged (secure-settings)" \
+  bash -c "jq -e '((.permissions.deny // []) | length) > 0' '$S2B' >/dev/null"
+assert_file "bun absent (deselected): wrap-up.md still placed"   "$PROFILE2B/commands/wrap-up.md"
+assert_file "bun absent (deselected): shell-audit skill placed"  "$PROFILE2B/skills/shell-audit"
+assert_lit  "bun absent (deselected): managed alias block written to rc" \
+  ">>> aka-claude-tools managed: aka" "$RC2B"
 # no maintainer-only $comment leak in the merged settings.
-assert_ok   "bun absent: no \$comment keys in deployed settings" \
-  bash -c "jq -e '[.. | objects | keys[]] | index(\"\$comment\") | not' '$S2' >/dev/null"
+assert_ok   "bun absent (deselected): no \$comment keys in deployed settings" \
+  bash -c "jq -e '[.. | objects | keys[]] | index(\"\$comment\") | not' '$S2B' >/dev/null"
 
 t_summary
