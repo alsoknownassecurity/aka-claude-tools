@@ -45,4 +45,70 @@ assert_ok "statusLine removed when basename matches" jqe "$PL" 'has("statusLine"
 KEEP="$(printf %s '{"statusLine":{"command":"/my/own.sh"}}' | src prune_statusline statusline.sh)"
 assert_ok "unrelated statusLine kept" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
 
+# ── adversarial characterization — the merge/prune INVARIANTS that make the gnarly
+#    jq safe to modify: a future edit that breaks any of these fails HERE. Asserted
+#    as jq PREDICATES (semantic), never byte-snapshots — so jq-version number/format
+#    drift can't flap them, and no latent bug is frozen as a "golden". (Seeds the
+#    nasty classes the merge is known to be sensitive to: nested $comment, key-order
+#    dedup, permission overlap, empty edges, array-valued commands.)
+
+# (1) $comment is stripped RECURSIVELY, not just top-level — a note nested inside a
+#     payload must never leak into the user's settings.
+NESTED='{"hooks":{"PreToolUse":[{"matcher":"Bash","$comment":"mid","hooks":[{"type":"command","command":"kit.sh","$comment":"deep"}]}]},"$comment":"top"}'
+MN="$(src merge_settings '{}' "$NESTED")"
+assert_ok "\$comment stripped at EVERY depth (recursive)" \
+  jqe "$MN" '[.. | objects | has("$comment")] | any | not'
+
+# (2) Hook dedup is KEY-ORDER-INSENSITIVE: the same kit hook already present with its
+#     object keys in a different order must NOT duplicate on merge (the canonicalizing
+#     unique_by). Regression = a hook that fires twice and doubles each upgrade.
+EH='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"kit.sh","type":"command"}]}]}}'
+AH='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"kit.sh"}]}]}}'
+MH="$(src merge_settings "$EH" "$AH")"
+assert_ok "key-order-insensitive hook dedup (no duplicate)" \
+  jqe "$MH" '[.hooks.PreToolUse[].hooks[] | select(.command=="kit.sh")] | length == 1'
+
+# (3) Permission union DEDUPS overlap across both inputs.
+MP="$(src merge_settings '{"permissions":{"deny":["Read(~/x)","Read(~/y)"]}}' '{"permissions":{"deny":["Read(~/y)","Read(~/z)"]}}')"
+assert_ok "permission union dedups the overlap" \
+  jqe "$MP" '.permissions.deny | (length==3) and (index("Read(~/y)")!=null)'
+
+# (4) Empty/missing edges.
+ME="$(src merge_settings '{}' "$A")"
+assert_ok "empty existing → additions land (minus \$comment)" jqe "$ME" '(.permissions.deny|index("Read(~/b)")!=null) and (has("$comment")|not)'
+MA="$(src merge_settings "$E" '{}')"
+assert_ok "empty additions → existing preserved"             jqe "$MA" '(.model=="opus") and (.permissions.allow|index("Bash(x)")!=null)'
+
+# (5) merge is idempotent on the WHOLE object (re-merge == first merge) — the
+#     strongest safe-to-modify invariant. Compared semantically (jq -s deep-equal).
+MII="$(src merge_settings "$M" "$A")"
+if printf '%s\n%s' "$M" "$MII" | jq -s -e '.[0]==.[1]' >/dev/null 2>&1; then
+  pass "merge is idempotent (re-merge equals first merge)"
+else fail "merge is idempotent (re-merge equals first merge)" "re-merge drifted"; fi
+
+# (6) prune_hook_regs TOLERATES a user hook whose .command is an ARRAY (a valid
+#     shape) — must not crash, still prunes the kit hook, keeps the user's array hook.
+SARR='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/p/hooks/leak-guard.sh"}]},{"matcher":"Edit","hooks":[{"type":"command","command":["my-tool","--run"]}]}]}}'
+PARR="$(printf %s "$SARR" | src prune_hook_regs leak-guard.sh)"
+assert_ok "prune tolerates an array-valued user .command (no crash, valid JSON)" jqe "$PARR" '.'
+assert_ok "prune removed the kit hook past the array entry" \
+  jqe "$PARR" '[.hooks.PreToolUse[]?.hooks[].command | select(type=="string")] | index("/p/hooks/leak-guard.sh") == null'
+assert_ok "prune kept the user's array-command hook" \
+  jqe "$PARR" '[.hooks.PreToolUse[]?.hooks[].command] | any(. == ["my-tool","--run"])'
+
+# (7) prune is idempotent: pruning an already-pruned settings is a no-op.
+PP="$(printf %s "$P" | src prune_hook_regs leak-guard.sh)"
+if printf '%s\n%s' "$P" "$PP" | jq -s -e '.[0]==.[1]' >/dev/null 2>&1; then
+  pass "prune is idempotent (second prune = no-op)"
+else fail "prune is idempotent (second prune = no-op)" "second prune drifted"; fi
+
+# (8) Scalar CONFLICT precedence — the UPGRADE CONTRACT. When existing and additions
+#     set the SAME scalar to DIFFERENT values, additions (the kit) win ($e * $a): an
+#     upgrade re-asserts the kit's value. A non-conflicting user key is kept. This is
+#     the one most likely to flip SILENTLY: a refactor swapping operand order would
+#     reverse kit-overrides-user and still pass every other test — this catches it.
+MSC="$(src merge_settings '{"model":"opus","theme":"dark"}' '{"model":"sonnet"}')"
+assert_ok "scalar conflict: additions (kit) win; non-conflicting user key kept" \
+  jqe "$MSC" '(.model=="sonnet") and (.theme=="dark")'
+
 t_summary
