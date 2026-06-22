@@ -114,6 +114,42 @@ Present a clear inventory and let the user pick per category (individual items o
 all). Flag cross-dependencies you notice (e.g. a skill that calls a hook, an
 agent referenced in settings, an MCP server a command relies on).
 
+### Shell-startup security pass (run it BEFORE any write)
+
+Before you write anything (the alias to the rc, the seeded auth, any placed file),
+run the bundled read-only auditor over the user's shell startup chain as a
+pre-write security pass:
+
+```
+bash config/skills/shell-audit/audit.sh            # picks the rc from $SHELL
+# or pass an explicit rc:  bash config/skills/shell-audit/audit.sh ~/.zshrc
+```
+
+It walks the rc and every file it sources (cycle-safe) and reports four classes —
+**credentials**, **persistence patterns**, **alias hygiene**, **git drift** — with
+secret values redacted. It is strictly read-only, fast (~0.2 s for a typical
+config, ~1 s for a large multi-file dotfiles tree), and independent of the rest of
+the scan, so you can run it concurrently with the inventory above.
+
+Why **before** any write, specifically:
+- The installer is about to **add an alias to the rc and seed auth** onto this
+  machine — surface a hardcoded credential, a `curl … | sh` persistence pattern,
+  or an unexpected git-drift/tamper on the startup files *first*, so the user
+  decides knowingly before a security profile is layered on top.
+- Run pre-write so the **git-drift** section reflects the user's *pre-existing* rc,
+  not the managed block the installer is about to add (which would otherwise read
+  as drift and mask a real one).
+
+Present the findings and **offer** fixes — never auto-apply them: dotfiles are
+Edit/Write-denied by design, so hand any fix to the user via a `! <cmd>` prompt
+(see the shell-audit skill's own guidance). Credentials are highest severity
+(recommend moving to a keychain + **rotating** anything exposed). If the output
+says **"COVERAGE IS PARTIAL"**, a variable-built `source` couldn't be resolved and
+that file was NOT audited — tell the user and offer to re-run pointed at the
+resolved path. State the scope limit: this covers the *shell-startup slice only*
+(not launchd/cron/login-items/ssh/git-hooks). This is a **detective tripwire, not a
+blocker** — a finding informs the user; it does not by itself abort the install.
+
 ## 3. Propose a migration plan, get approval
 
 Summarize: target dir, alias, items to migrate, additions to add, and anything
@@ -121,6 +157,9 @@ that needs special handling (path rewrites, MCP auth, dangling imports). Wait fo
 the user's go-ahead.
 
 ## 4. Execute
+
+> Confirm the pre-write **shell-startup security pass** (section 2) has already run
+> and its findings were surfaced — everything below writes to disk or the rc.
 
 - `mkdir -p` the target dir.
 - Copy the **selected** items into the matching subdirs. Make migrated hooks
