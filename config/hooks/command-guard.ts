@@ -51,17 +51,193 @@ interface Patterns {
 // Degraded-mode fallback ONLY (patterns unloadable) to find the risky subset to
 // fail closed on. NOT the source of truth — that's lib/secret-patterns.json.
 const FALLBACK_OUTBOUND = /\b(curl|wget|nc|ncat|socat|fetch)\b/i;
-const PIPE_TO_SHELL = /\|\s*(sh|bash|zsh)\b/i;
 
-// Startup-file write (persistence vector) — structural, patterns-independent.
-// A shell startup-file basename (leading dot), matched anywhere a path appears.
-const STARTUP_FILE = '\\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\\b';
-// A WRITE is: a redirection (> / >>) whose target is such a file, OR a
-// write-capable command (tee/sed -i/cp/mv/install/ln) referencing one. The
-// [^|;&<>]* keeps each match within a single command, not across a pipe/list.
-const STARTUP_WRITE = new RegExp(
-  `>>?\\s*[^|;&<>]*${STARTUP_FILE}|\\b(tee|sed\\s+-i|cp|mv|install|ln)\\b[^|;&]*${STARTUP_FILE}`,
-);
+// CONSERVATIVE raw-string fallbacks — used ONLY if the tokenizer throws (pathological
+// input). They OVER-block (the very FPs this PR removes) but must never UNDER-block what
+// the tokenizer would catch, so a parser failure degrades to "too strict", never to a
+// silent allow on the sole Bash guard. Deliberately broad: any pipe (incl. |&) into an
+// interpreter; any '>'-ish redirection OR write-verb anywhere on a line that names a
+// startup dotfile (a rare fallback path, so over-blocking a read like `cp .zshrc x` is fine).
+const PIPE_TO_SHELL_RAW = /\|&?\s*(sh|bash|zsh)\b/i;
+const STARTUP_WRITE_RAW = /(?:>|\btee\b|\bsed\b|\bcp\b|\bmv\b|\binstall\b|\bln\b|\bdd\b)[^\n]*\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/;
+
+// A shell startup-file basename (leading dot) — the persistence-vector targets.
+const STARTUP_BASENAME = /^\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)$/;
+const TOKENIZE_MAX_DEPTH = 40; // substitution-nesting cap; beyond it we throw → raw fallback.
+const SHELL_INTERPRETERS = new Set(['sh', 'bash', 'zsh']);
+
+// ── quote-aware tokenizer (FP-resistant structural checks) ────────────────────
+// A regex over the raw command string can't tell a shell OPERATOR (| >) or command
+// WORD (bash, cp) that is REAL from one sitting inside quotes as DATA — so it over-
+// blocks `echo "see -> notes"` / `echo 'curl | bash'` / a startup path passed as a
+// READ argument. But operators inside a $(...) / `...` substitution DO execute, even
+// within double quotes, so they must still count. We tokenize once — single quotes are
+// literal data, double-quote literal text is data, and substitution CONTENTS are spliced
+// back in as live tokens — then run the structural checks on that token stream.
+//
+// THREAT MODEL (unchanged): this guards ACCIDENTAL / obvious danger, not a determined
+// adversary. Operators resurrected at runtime via eval / dynamic assembly (eval
+// "$(...)", X=ba;${X}sh) are out of scope here, as they already were for the regex.
+// KNOWN GAPS (parity with the prior regex — NOT regressions; tracked separately):
+//   - pipe target must be a bare sh/bash/zsh word; `| /bin/bash`, `| env bash`,
+//     `| bash -s` are not yet matched (a follow-on broadens interpreter coverage).
+//   - here-doc BODIES (`<<EOF … EOF`) are scanned as live text, so a dangerous-looking
+//     literal in a heredoc body can over-block (an FP, never an under-block).
+interface Tok { v: string; op: boolean }
+
+// Balanced "(...)" from index `from` (just past the opening paren) → inner + end index.
+// QUOTE-AWARE: a ')' inside a single/double-quoted span does NOT close the
+// substitution (else `$(echo ")")` would mis-close at the quoted ')' and the trailing
+// live operators would be absorbed as data — masking a real pipe-to-interpreter).
+function extractParen(s: string, from: number): { inner: string; end: number } {
+  let depth = 1, i = from, inner = '';
+  while (i < s.length && depth > 0) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length) { inner += c + s[i + 1]; i += 2; continue; }
+    if (c === "'") {                       // single-quoted span — copy verbatim, no paren counting
+      inner += c; i++;
+      while (i < s.length && s[i] !== "'") { inner += s[i]; i++; }
+      if (i < s.length) { inner += s[i]; i++; }
+      continue;
+    }
+    if (c === '"') {                       // double-quoted span — copy verbatim (honoring \")
+      inner += c; i++;
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === '\\' && i + 1 < s.length) { inner += s[i] + s[i + 1]; i += 2; continue; }
+        inner += s[i]; i++;
+      }
+      if (i < s.length) { inner += s[i]; i++; }
+      continue;
+    }
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) { i++; break; } }
+    inner += c; i++;
+  }
+  return { inner, end: i };
+}
+// `...` from index `from` (just past the opening backtick) → inner + end index.
+function extractBacktick(s: string, from: number): { inner: string; end: number } {
+  let i = from, inner = '';
+  while (i < s.length && s[i] !== '`') {
+    if (s[i] === '\\' && i + 1 < s.length) { inner += s[i] + s[i + 1]; i += 2; continue; }
+    inner += s[i]; i++;
+  }
+  return { inner, end: i + 1 };
+}
+
+function tokenize(cmd: string, depth = 0): Tok[] {
+  if (depth > TOKENIZE_MAX_DEPTH) throw new Error('command-guard: substitution nesting too deep');
+  const toks: Tok[] = [];
+  let word = '', has = false;
+  const flush = () => { if (has) toks.push({ v: word, op: false }); word = ''; has = false; };
+  // Splice a substitution / process-substitution's inner command in as LIVE tokens,
+  // BRACKETED by ';' separators. The brackets keep the inner as its OWN simple-command(s)
+  // for verb-direction detection (so `echo "$(tee ~/.zshrc)"` / `> >(tee ~/.zshrc)` see
+  // `tee` as a command word, not glued into the parent), while pipe/redirect scans, which
+  // look across the whole stream, are unaffected.
+  const spliceInner = (inner: string) => {
+    flush();
+    toks.push({ v: ';', op: true });
+    for (const t of tokenize(inner, depth + 1)) toks.push(t);
+    toks.push({ v: ';', op: true });
+  };
+  let i = 0;
+  const n = cmd.length;
+  while (i < n) {
+    const c = cmd[i];
+    if (c === ' ' || c === '\t' || c === '\n') { flush(); i++; continue; }
+    // a '#' at a WORD BOUNDARY (not mid-word like a#b, not inside quotes) starts a shell
+    // comment → skip to end of line. Prevents FPs where a comment merely MENTIONS a pipe
+    // or redirect (`echo hi # see ~/.zshrc`). Operators BEFORE the '#' are already tokenized.
+    if (c === '#' && !has) { while (i < n && cmd[i] !== '\n') i++; continue; }
+    if (c === '\\' && i + 1 < n) { word += cmd[i + 1]; has = true; i += 2; continue; }
+    if (c === "'") {                                   // single quote: literal data
+      i++;
+      while (i < n && cmd[i] !== "'") { word += cmd[i]; has = true; i++; }
+      i++; continue;
+    }
+    if (c === '"') {                                   // double quote: data, but subst is live
+      i++;
+      while (i < n && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < n) { word += cmd[i + 1]; has = true; i += 2; continue; }
+        if (cmd[i] === '$' && cmd[i + 1] === '(') { const b = extractParen(cmd, i + 2); spliceInner(b.inner); i = b.end; continue; }
+        if (cmd[i] === '`') { const b = extractBacktick(cmd, i + 1); spliceInner(b.inner); i = b.end; continue; }
+        word += cmd[i]; has = true; i++;
+      }
+      i++; continue;
+    }
+    if (c === '$' && cmd[i + 1] === '(') { const b = extractParen(cmd, i + 2); spliceInner(b.inner); i = b.end; continue; }
+    if (c === '`') { const b = extractBacktick(cmd, i + 1); spliceInner(b.inner); i = b.end; continue; }
+    // process substitution <(…) / >(…) — its inner is a LIVE command (a write/pipe there
+    // executes), so recurse like $(…). Without this, `> >(tee ~/.zshrc)` would hide the
+    // tee-to-startup write. The leading < / > is emitted as an op (harmless; the real
+    // redirect target is the process-sub, not a file).
+    if ((c === '<' || c === '>') && cmd[i + 1] === '(') { flush(); toks.push({ v: c, op: true }); const b = extractParen(cmd, i + 2); spliceInner(b.inner); i = b.end; continue; }
+    // bare ( ) — subshell / grouping. Real $(…) and <(…)/>(…) were consumed above; here
+    // they are WORD BOUNDARIES so a trailing ')' doesn't glue onto the last word.
+    if (c === '(' || c === ')') { flush(); toks.push({ v: c, op: true }); i++; continue; }
+    // operators (longest first): redirections incl. bash compound forms
+    // (&>, &>>, >&, >|, fd-prefixed), then pipes (incl. |&) / lists. Compound redirect
+    // forms are lexed as SINGLE tokens so the target that follows is detected (a raw lexer
+    // splitting `>|` into `>`+`|` would miss the post-`|` target — a real persistence write).
+    const m = /^(\d*>>|\d*>&|\d*>\||\d*>|&>>|&>|<<<|<<|<|\|\||\|&|\||&&|&|;)/.exec(cmd.slice(i));
+    if (m) { flush(); toks.push({ v: m[1], op: true }); i += m[1].length; continue; }
+    word += c; has = true; i++;
+  }
+  flush();
+  return toks;
+}
+
+function isStartupFile(w: string): boolean {
+  const base = w.split('/').pop() ?? w;
+  return STARTUP_BASENAME.test(base);
+}
+
+// pipe-to-shell: a real `|` operator immediately feeding a shell interpreter word.
+function detectPipeToShell(toks: Tok[]): boolean {
+  for (let i = 0; i < toks.length - 1; i++) {
+    // | and |& (pipe stdout, or stdout+stderr) feeding a shell interpreter. Case-
+    // insensitive: on a case-insensitive FS (macOS) `BASH` resolves to bash.
+    if (toks[i].op && (toks[i].v === '|' || toks[i].v === '|&') && !toks[i + 1].op && SHELL_INTERPRETERS.has(toks[i + 1].v.toLowerCase())) return true;
+  }
+  return false;
+}
+
+// startup-file WRITE: (1) a redirection (> / >> / fd>) whose target is a startup file,
+// or (2) a write-capable command with a startup file as its DESTINATION. Direction-aware:
+// a startup file as a cp/mv/ln SOURCE is a read and is NOT flagged.
+function detectStartupWrite(toks: Tok[]): boolean {
+  // (1) any redirection operator (it contains '>': > >> n> &> &>> >& >|) whose target
+  //     token is a startup file. '<' / '<<' (reads/here-docs) don't contain '>' → ignored.
+  //     A fd-dup like 2>&1 has a number, not a startup path, as its next token → not flagged.
+  for (let i = 0; i < toks.length - 1; i++) {
+    if (toks[i].op && toks[i].v.includes('>') && !toks[i + 1].op && isStartupFile(toks[i + 1].v)) return true;
+  }
+  let cur: Tok[] = [];
+  const cmds: Tok[][] = [];
+  for (const t of toks) {
+    if (t.op && (t.v === '|' || t.v === '||' || t.v === '&&' || t.v === ';' || t.v === '&')) { if (cur.length) cmds.push(cur); cur = []; }
+    else cur.push(t);
+  }
+  if (cur.length) cmds.push(cur);
+  for (const sc of cmds) {
+    const words = sc.filter((t) => !t.op).map((t) => t.v);
+    if (!words.length) continue;
+    const cmd = words[0];
+    const args = words.slice(1);
+    const nonFlag = args.filter((a) => !a.startsWith('-'));
+    if (cmd === 'tee') {                                          // tee writes ALL its file args
+      if (nonFlag.some(isStartupFile)) return true;
+    } else if (cmd === 'sed') {                                   // sed -i edits its file args in place
+      if (args.some((a) => /^-i/.test(a) || a.startsWith('--in-place')) && nonFlag.some(isStartupFile)) return true;
+    } else if (cmd === 'cp' || cmd === 'mv' || cmd === 'install' || cmd === 'ln') {
+      if (nonFlag.length && isStartupFile(nonFlag[nonFlag.length - 1])) return true;  // destination only
+    } else if (cmd === 'dd') {                                    // dd of=<startup file> writes it
+      if (args.some((a) => a.startsWith('of=') && isStartupFile(a.slice(3)))) return true;
+    }
+  }
+  return false;
+}
 
 // Structural alerts — command-guard-specific (NOT shared; not secret patterns).
 const EGRESS_ALERTS: [RegExp, string][] = [
@@ -152,14 +328,30 @@ function main(): void {
       : (input.tool_input?.command as string | undefined) ?? '';
   if (!command) process.exit(0);
 
-  // Pipe-to-shell — structural, patterns-independent, runs even in degraded mode.
-  if (PIPE_TO_SHELL.test(command)) {
+  // Structural checks run over a quote-aware token stream (operators/words inside
+  // quotes are data; inside $(...)/`...` they are live), even in degraded mode. If the
+  // tokenizer throws on pathological input (e.g. nesting past the depth cap), fall back
+  // to the CONSERVATIVE raw-string regexes — over-block, never silently allow. This is
+  // the sole Bash guard, so a parser failure must NEVER fail open.
+  let pipeToShell: boolean, startupWrite: boolean;
+  try {
+    const toks = tokenize(command);
+    pipeToShell = detectPipeToShell(toks);
+    startupWrite = detectStartupWrite(toks);
+  } catch {
+    console.error('[aka-claude-tools SECURITY] ⚠️ command-guard: command too complex to parse precisely — falling back to strict structural checks (may over-block).');
+    pipeToShell = PIPE_TO_SHELL_RAW.test(command);
+    startupWrite = STARTUP_WRITE_RAW.test(command);
+  }
+
+  // Pipe-to-shell — structural, patterns-independent.
+  if (pipeToShell) {
     console.error('[aka-claude-tools SECURITY] 🚨 BLOCKED (command-guard): piping output into a shell interpreter (curl … | bash). Download, inspect, then run.');
     process.exit(2);
   }
 
-  // Startup-file write — structural persistence-vector check. Runs even in degraded mode.
-  if (STARTUP_WRITE.test(command)) {
+  // Startup-file write — structural persistence-vector check.
+  if (startupWrite) {
     console.error('[aka-claude-tools SECURITY] 🚨 BLOCKED (command-guard): writing to a shell startup file (~/.zshrc, ~/.bashrc, …) is a persistence vector. Your dotfiles are Edit/Write-denied; a Bash redirection bypasses that. If intentional, run it in your own shell (e.g. a `! <cmd>` prompt); for a profile alias use `./install.sh --alias`.');
     process.exit(2);
   }
