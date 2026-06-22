@@ -63,13 +63,18 @@ out="$(run_in_repo "$OBR" 2>/dev/null)"
 #     the pre-fix code, so the test has teeth.)
 BRH="$SB/branch-host"
 EVIL_BR="x';>BR_INJECTED;'y"
-mkdir -p "$BRH" && ( cd "$BRH" && git init -q && git commit -q --allow-empty -m i \
-  && git branch -m "$EVIL_BR" ) 2>/dev/null
-# Anti-vacuous guard: if git ever rejects the payload the branch falls back to a benign
-# name and the no-injection check would pass for the WRONG reason. Assert it stuck.
-got_br="$(cd "$BRH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+# Inline git identity so the commit succeeds on ANY host: CI redirects HOME to the
+# sandbox (no git identity), and without this the commit fails, the branch stays unborn,
+# and HEAD reads back as 'HEAD' — making the test vacuously "pass". checkout -b then
+# creates the payload branch.
+mkdir -p "$BRH" && ( cd "$BRH" && git init -q \
+  && git -c user.email=t@t.test -c user.name=test commit -q --allow-empty -m i \
+  && git checkout -q -b "$EVIL_BR" ) 2>/dev/null
+# Anti-vacuous guard: if git ever rejects the payload (or the commit failed) HEAD won't
+# be the payload branch, and the no-injection check would pass for the WRONG reason.
+got_br="$(cd "$BRH" && git symbolic-ref --short -q HEAD 2>/dev/null || true)"
 if [ "$got_br" != "$EVIL_BR" ]; then
-  fail "crafted branch name does NOT inject code (RCE blocked)" "test setup vacuous: branch is '$got_br', not the payload"
+  fail "crafted branch name does NOT inject code (RCE blocked)" "test setup vacuous: branch is '${got_br:-<unborn/detached>}', not the payload"
 else
   rm -f "$BRH/BR_INJECTED"
   out="$(run_in_repo "$BRH" 2>/dev/null)"; rc=$?
