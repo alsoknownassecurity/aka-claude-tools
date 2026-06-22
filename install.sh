@@ -475,8 +475,21 @@ compile_org_sidecar() {
 
   # Extract CT_EGRESS_PATTERNS by sourcing the config in a SUBSHELL (set +eu so the
   # user's file can't trip our strict mode). The value never re-enters install's env.
-  local pat=""
-  pat="$( set +eu; . "$cfg" >/dev/null 2>&1; printf '%s' "${CT_EGRESS_PATTERNS:-}" )" || true
+  local pat="" _src_rc=0
+  pat="$( set +eu; . "$cfg" >/dev/null 2>&1; _rc=$?; printf '%s' "${CT_EGRESS_PATTERNS:-}"; exit "$_rc" )" || _src_rc=$?
+  if [ "$_src_rc" -ne 0 ]; then
+    # Sourcing the config failed. Never silently disable the org tier, but tell the truth
+    # about what actually happened — the message differs by whether a pattern survived:
+    if [ -z "$pat" ]; then
+      # Nothing compiled (e.g. a syntax error before any assignment) — the tier is OFF.
+      warn "aka-claude-tools.config could not be sourced (exit $_src_rc) — org-egress patterns NOT compiled; the org-marker tier is INACTIVE until you fix the config and re-run ./install.sh."
+    else
+      # A pattern WAS set before the failure — the tier compiles with it, but part of the
+      # config did not run. Surface it (never hide a real source error) without the
+      # misleading "inactive" claim.
+      warn "aka-claude-tools.config sourced with an error (exit $_src_rc) — a pattern was set and compiled, but part of the config did not run. Review the config and re-run ./install.sh."
+    fi
+  fi
 
   if [ -n "$pat" ]; then
     case "$pat" in
@@ -509,14 +522,14 @@ compile_org_sidecar() {
     fi
   fi
 
-  # sourceHash lets command-guard warn when the config drifts post-install. Hash the
-  # RAW config FILE BYTES (the exact byte domain command-guard re-hashes — NOT the
-  # shell-expanded value). Via bun when present (without bun there is no JS consumer
-  # to check staleness, so an empty hash is correct).
+  # sourceHash lets BOTH guards warn when the config drifts post-install. Hash the RAW
+  # config FILE BYTES — the byte domain command-guard re-hashes via bun AND leak-guard
+  # re-hashes on the bun-less floor (NOT the shell-expanded value). Computed with a
+  # PORTABLE sha256, never bun, so a bun-less web-only install still publishes a usable
+  # hash for leak-guard's staleness check. sha256 hex is implementation-independent, so
+  # this equals command-guard's bun createHash over the same bytes.
   local hash=""
-  if command -v bun >/dev/null 2>&1; then
-    hash="$(bun -e 'const fs=require("fs");const{createHash}=require("crypto");process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$cfg" 2>/dev/null || true)"
-  fi
+  hash="$(sha256_file "$cfg" 2>/dev/null || true)"
 
   # Atomic publish: temp + rename, so a concurrent hook never reads a partial file.
   local tmp="$sidecar.tmp.$$"

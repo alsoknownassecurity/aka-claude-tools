@@ -28,6 +28,17 @@ set -euo pipefail
 _HOOK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 _PATTERNS="$_HOOK_DIR/lib/secret-patterns.json"
 _ORG_SIDECAR="$_HOOK_DIR/lib/org-egress.json"
+_CONFIG="$_HOOK_DIR/../aka-claude-tools.config"
+
+# Portable sha256 of a file → bare lowercase hex (BSD + GNU): sha256sum, else
+# shasum -a 256 (ships on macOS), else openssl. Empty if none available. Matches the
+# byte domain install.sh hashed into the sidecar's sourceHash.
+_sha256_file() {
+  if   command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum    >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl   >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else return 1; fi
+}
 
 command -v jq >/dev/null 2>&1 || { echo "warn (leak-guard): jq not found (it is a required dependency) — egress scan SKIPPED this call. Reinstall jq." >&2; exit 0; }
 
@@ -62,6 +73,20 @@ if command -v trufflehog >/dev/null 2>&1; then
     fi
 else
     echo "warn (leak-guard): trufflehog not installed — secret detection degraded to regex tiers (org markers + shared key shapes)." >&2
+fi
+
+# ── Stale-config advisory (warns, NEVER blocks): if aka-claude-tools.config changed
+# since install but the sidecar wasn't recompiled, the org markers below are STALE.
+# Mirrors command-guard's sourceHash check, but bun-free (this is the bun-less floor):
+# re-hash the raw config bytes with a portable sha256 and compare to the stored hash. ──
+if [ -f "$_ORG_SIDECAR" ] && [ -f "$_CONFIG" ]; then
+    _wanthash="$(jq -r '.sourceHash // empty' "$_ORG_SIDECAR" 2>/dev/null || true)"
+    if [ -n "$_wanthash" ]; then
+        _livehash="$(_sha256_file "$_CONFIG" 2>/dev/null || true)"
+        if [ -n "$_livehash" ] && [ "$_livehash" != "$_wanthash" ]; then
+            echo "warn (leak-guard): aka-claude-tools.config changed since install but its org-egress patterns were not recompiled — the org-marker tier is using STALE patterns. Re-run ./install.sh to recompile. (Web egress is still scanned with the last-compiled patterns.)" >&2
+        fi
+    fi
 fi
 
 # ── Tier 2: opt-in org markers — read the install-COMPILED sidecar (never source
