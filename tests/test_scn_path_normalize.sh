@@ -28,6 +28,7 @@ set env(CT_ADDITIONS) "secure-settings"
 spawn bash "$REPO_ROOT/install.sh" --no-auth-inherit
 expect {
   -re {Config folder to create/update} { send "$SBA/.claude/\r"; exp_continue }
+  -re {Modify your default}             { send "y\r"; exp_continue }
   -re {Back up.*rebuild it clean}       { send "y\r"; exp_continue }
   -re {Migrate items from an existing}  { send "n\r"; exp_continue }
   -re {Shell alias to launch it}        { send "\r";  exp_continue }
