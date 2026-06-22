@@ -3,7 +3,10 @@
 # SOURCES. Values derived from the git ref + the repo dir/remote name (branch, repo)
 # and the weather cache MUST be shell-quoted before being written into those sourced
 # fragments, or a crafted branch / maliciously-named clone directory injects code on
-# render (CWE-78). Regression net for the printf %q fix.
+# render (CWE-78). Regression net for the printf %q fix. This net directly exercises
+# the two attacker-reachable sinks — the repo-dir basename and the git branch name —
+# from inside a crafted repo; the weather/usage fragments are quoted by the same
+# printf %q construct (verified by the fix), not re-exercised here.
 #
 # statusline runs its git block in its PROCESS cwd (not the JSON current_dir), so —
 # like Claude Code launching it inside the project dir, and like the real attack — we
@@ -27,10 +30,16 @@ run_in_repo(){ ( cd "$1" && printf '%s' "$(sl_input "$1")" | bash "$SL" ); }
 EVIL="$SB/z';touch INJECTED;'"
 mkdir -p "$EVIL" && ( cd "$EVIL" && git init -q && git commit -q --allow-empty -m i ) 2>/dev/null
 rm -f "$EVIL/INJECTED"
-run_in_repo "$EVIL" >/dev/null 2>&1
-[ -e "$EVIL/INJECTED" ] \
-  && fail "crafted repo dir name does NOT inject code (RCE blocked)" "marker created — injection fired" \
-  || pass "crafted repo dir name does NOT inject code (RCE blocked)"
+out="$(run_in_repo "$EVIL" 2>/dev/null)"; rc=$?
+if [ -e "$EVIL/INJECTED" ]; then
+  fail "crafted repo dir name does NOT inject code (RCE blocked)" "marker created — injection fired"
+elif [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+  # A clean exit + a rendered line proves statusline ran THROUGH the sourced fragment;
+  # without this, an early abort before the sink would make marker-absence a false pass.
+  fail "crafted repo dir name does NOT inject code (RCE blocked)" "statusline did not render the sink (rc=$rc, empty=$([ -z "$out" ] && echo yes || echo no)) — marker-absence would be a false pass"
+else
+  pass "crafted repo dir name does NOT inject code (RCE blocked)"
+fi
 
 # (2) A LEGITIMATE repo name with an apostrophe (e.g. O'Brien) must render without a
 #     fragment source error — the old raw single-quoting broke on this.
@@ -46,5 +55,31 @@ out="$(run_in_repo "$OBR" 2>/dev/null)"
 [ -n "$out" ] \
   && pass "statusline still renders a non-empty line on the apostrophe repo" \
   || fail "statusline still renders a non-empty line on the apostrophe repo" "empty output"
+
+# (3) RCE via a crafted BRANCH name. The branch flows into the same SOURCED git
+#     fragment (branch='...') as the repo name. git refnames FORBID spaces but ALLOW '
+#     and ; — so the payload uses a space-free redirection (>BR_INJECTED), not `touch`,
+#     to break out of the single-quoted assignment. (Verified: this exact name fires on
+#     the pre-fix code, so the test has teeth.)
+BRH="$SB/branch-host"
+EVIL_BR="x';>BR_INJECTED;'y"
+mkdir -p "$BRH" && ( cd "$BRH" && git init -q && git commit -q --allow-empty -m i \
+  && git branch -m "$EVIL_BR" ) 2>/dev/null
+# Anti-vacuous guard: if git ever rejects the payload the branch falls back to a benign
+# name and the no-injection check would pass for the WRONG reason. Assert it stuck.
+got_br="$(cd "$BRH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+if [ "$got_br" != "$EVIL_BR" ]; then
+  fail "crafted branch name does NOT inject code (RCE blocked)" "test setup vacuous: branch is '$got_br', not the payload"
+else
+  rm -f "$BRH/BR_INJECTED"
+  out="$(run_in_repo "$BRH" 2>/dev/null)"; rc=$?
+  if [ -e "$BRH/BR_INJECTED" ]; then
+    fail "crafted branch name does NOT inject code (RCE blocked)" "marker created — injection fired"
+  elif [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    fail "crafted branch name does NOT inject code (RCE blocked)" "statusline did not render the sink (rc=$rc) — marker-absence would be a false pass"
+  else
+    pass "crafted branch name does NOT inject code (RCE blocked)"
+  fi
+fi
 
 t_summary
