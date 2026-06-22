@@ -152,14 +152,21 @@ prune_hook_regs() {
     else . end'
 }
 
-# Drop .statusLine if its command references basename $1.
+# Drop the kit's .statusLine (command references basename $1) on deselect — and if a
+# user's own prior statusLine was stashed when the addition was installed (see the
+# stash step in apply_additions), RESTORE it verbatim instead of leaving none. The
+# statusLine is a singleton object the merge overwrites, so stash+restore is the only
+# way to deselect 'statusline' without losing a value the user had before.
 prune_statusline() {
   jq --arg b "$1" '
     if (.statusLine|type)=="object"
        and ((.statusLine.command) as $c
             | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
             | contains($b))
-    then del(.statusLine) else . end'
+    then (if has("_aka_prior_statusLine")
+          then .statusLine = ._aka_prior_statusLine | del(._aka_prior_statusLine)
+          else del(.statusLine) end)
+    else . end'
 }
 
 # Subtract an addition's shipped permission arrays + env keys (read from its
@@ -167,6 +174,13 @@ prune_statusline() {
 # arrays and key-removal on env — only the exact rules the kit shipped go; any
 # the user also keeps elsewhere in their own rules are unaffected (the kit rule
 # is a duplicate the union would re-add anyway).
+# ACCEPTED EDGE (operator decision): the prune can't distinguish "the kit installed
+# this rule" from "the user independently holds an identically-phrased rule." So a
+# PARTIAL install that deselects a settings-only addition (e.g. secure-settings) will
+# remove a coinciding user rule even if that addition was never installed. This is the
+# intended deselect semantics; the trigger (partial install + a user deny phrased
+# exactly like a kit deny) is rare, and selecting the addition re-adds it. Documented,
+# not "fixed" — a precise fix would need per-rule install provenance.
 prune_perms_env() {
   local p; p="$(jq -c '{permissions: (.permissions // {}), env: (.env // {})}' "$1" 2>/dev/null || printf '{}')"
   jq --argjson p "$p" '
@@ -205,7 +219,10 @@ prune_addition_from_settings() {
   sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
-  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(basename "$sline")")"
+  # Path-anchored ("/hooks/statusline.sh"), not just the basename, so a user statusLine
+  # that merely happens to be named statusline.sh in some OTHER dir is never matched as
+  # the kit's (consistent with the stash/restore precision in apply_additions).
+  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "/$sline")"
   # The statusline addition can pin a weather location into .preferences.location at
   # install; prune_statusline only drops the statusLine command, so remove that pinned
   # preference too (it is the only thing the kit writes under .preferences).
@@ -430,6 +447,17 @@ setup_one_config() {
   # The default ~/.claude needs no alias (plain `claude` launches it).
   local is_default=0
   [ "$config_dir" = "$HOME/.claude" ] && is_default=1
+
+  # Footgun heads-up: ~/.claude is the LIVE default profile, not an isolated one. The kit
+  # is additive/reversible (so this isn't the un-bypassable refusal uninstall uses), but
+  # it must never modify the default profile SILENTLY — warn always, and confirm when a
+  # human is present. (Mirrors uninstall.sh's default-dir guard on the install side.)
+  if [ "$is_default" = "1" ]; then
+    warn "~/.claude is your DEFAULT Claude Code config — the kit will layer onto your LIVE default profile (it normally creates an isolated one)."
+    if [ "${CT_NONINTERACTIVE:-0}" != "1" ]; then
+      confirm "  Modify your default ~/.claude profile?" "N" || die "Aborted — re-run with a different folder for an isolated profile."
+    fi
+  fi
 
   # 2. alias name (default derived from folder basename: ~/.claude-aka -> aka).
   local alias_name=""
@@ -736,8 +764,13 @@ apply_additions() {
   # is in the trigger now: it reads CT_EGRESS_PATTERNS (via the compiled sidecar
   # below), so a command-guard-only install must still get the config — else the
   # org-marker tier silently vanishes for that install.
+  # `-e` (not `-f`): a DANGLING symlink — e.g. a config symlinked to a path that moved
+  # away — is false under -e, so we (re)place the template. The rm -f first clears that
+  # broken link, otherwise `cp` would follow it to the missing target and abort the whole
+  # install under set -e. A valid symlink to a real config is true under -e → left alone.
   if { is_selected leak-guard "$_sel_ids" || is_selected command-guard "$_sel_ids" || is_selected harness-pointer "$_sel_ids"; } \
-     && [ ! -f "$config_dir/aka-claude-tools.config" ]; then
+     && [ ! -e "$config_dir/aka-claude-tools.config" ]; then
+    rm -f "$config_dir/aka-claude-tools.config"
     cp "$REPO_DIR/shared/aka-claude-tools.config.example" "$config_dir/aka-claude-tools.config"
     ok "Placed aka-claude-tools.config (opt-in, empty by default)"
   fi
@@ -756,7 +789,7 @@ apply_additions() {
     # actionable framing (the parse failure surfaces from deep inside merge_settings
     # / the prune helpers). Fail with a named, recoverable message instead.
     if [ -s "$config_dir/settings.json" ] && ! jq -e . "$config_dir/settings.json" >/dev/null 2>&1; then
-      die "$config_dir/settings.json is not valid JSON (corrupt or truncated). Fix or remove it, then re-run — or re-run with --clean to back it up and rebuild."
+      die "$config_dir/settings.json is not valid JSON (corrupt or truncated). Fix it, or move it aside (e.g. mv settings.json settings.json.bak), then re-run."
     fi
     existing="$(cat "$config_dir/settings.json")"
     # Coerce wrong-TYPED (but valid-JSON) kit-managed fields to safe shapes so the
@@ -799,6 +832,25 @@ apply_additions() {
     fi
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
+
+  # 4d-pre1d. Preserve a user's existing statusLine when selecting the statusline addition.
+  # The kit's statusLine is a singleton object the merge OVERWRITES (no safe union), so a
+  # plain install would silently lose a statusLine the user already had. Stash a NON-kit
+  # prior value once — prune_statusline restores it verbatim if the addition is later
+  # deselected. Idempotency guard: only stash when the current statusLine is the user's
+  # (command does NOT reference our statusline.sh) AND nothing is stashed yet, so a re-apply
+  # can never overwrite the saved original with the kit value.
+  if is_selected statusline "$_sel_ids" && [ "$existing" != "{}" ]; then
+    if printf '%s' "$existing" | jq -e '
+          (.statusLine|type)=="object"
+          and ((.statusLine.command) as $c
+               | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
+               | contains("/hooks/statusline.sh") | not)
+          and (has("_aka_prior_statusLine")|not)' >/dev/null 2>&1; then
+      warn "Replacing your existing statusLine with the kit's — your previous one is saved and restored if you later deselect 'statusline'."
+      existing="$(printf '%s' "$existing" | jq '._aka_prior_statusLine = .statusLine')"
+    fi
+  fi
 
   # 4d-pre1a. The shared egress-guard libs (hooks/lib/secret-patterns.json and the
   # compiled hooks/lib/org-egress.json sidecar) are owned by NO single addition — they're
@@ -948,6 +1000,9 @@ apply_entry() {
   # absolute, so hook/command paths bind to a stable location.
   [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
   case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
+  # Footgun heads-up (engine mode is non-interactive, so warn — never silently modify the
+  # live default profile). The caller (Path A / CI) owns the decision to target it.
+  [ "$config_dir" = "$HOME/.claude" ] && warn "Targeting your DEFAULT Claude Code config (~/.claude) — layering the kit onto your live default profile, not an isolated one."
   mkdir -p "$config_dir"
   apply_additions "$config_dir"
   ok "Applied additions to ${config_dir/#$HOME/~}"

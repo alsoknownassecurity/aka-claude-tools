@@ -361,7 +361,11 @@ dir:
   never dropped; the kit's **own** rules are *reconciled* (new ones adopted, ones
   the kit has since **retired** removed) — your rules are untouched.
 - **Deselecting** an addition on a re-run uninstalls it (its files + settings
-  registrations are pruned).
+  registrations are pruned). One edge to know: deselecting a *settings-only*
+  addition (e.g. `secure-settings`) removes the permission rules it ships — and if
+  one of those happens to be phrased **identically** to a rule you keep yourself, it
+  is removed too (the prune can't tell the two apart). Selecting the addition adds it
+  back; the recommended full-set install never triggers this.
 
 The easiest upgrade is **Path A** — ask your authenticated Claude Code to read
 `agent-install.md`; it re-applies the kit (via `install.sh --apply`) and reasons
@@ -398,6 +402,13 @@ used only to **refuse** removing the profile the current session is running insi
 which is also excluded from the pick-list), `--yes` won't guess between several
 discovered profiles, and removing the default `~/.claude` always requires an
 interactive confirmation. Prefer running it from a plain shell.
+
+> ⚠️ **`uninstall.sh <dir>` removes the *entire* directory, not just the kit's
+> files.** It assumes the profile dir is an isolated one the kit created (the normal
+> case). It is **not** a surgical "remove only aka-claude-tools pieces" — that's what
+> *deselecting* additions on an `install.sh` re-run does (it removes exactly the files
+> and settings entries each addition contributed, leaving your own untouched). Never
+> point `uninstall.sh` at a directory that also holds content you want to keep.
 
 From inside an authenticated session you can instead ask Claude to
 `Read agent-uninstall.md and remove my <name> profile` — it audits what's
