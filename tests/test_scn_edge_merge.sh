@@ -27,7 +27,7 @@ S="$PROFILE/settings.json"
 assert_file "install placed settings.json" "$S"
 
 n0="$(jq '[.hooks.PreToolUse[]?] | length' "$S" 2>/dev/null)"
-assert_eq "leak-guard registered 2 hook entries on fresh install" "2" "$n0"
+assert_eq "leak-guard registered 1 hook entry on fresh install (web-only)" "1" "$n0"
 
 # Simulate the app/user rewriting the SAME entries with object keys reordered
 # (semantically identical — every command string is unchanged).
@@ -38,8 +38,8 @@ SHELL=/bin/bash HOME="$SB" CT_ADDITIONS="leak-guard" CT_NONINTERACTIVE=1 \
   bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$SB/l2" 2>&1
 
 n1="$(jq '[.hooks.PreToolUse[]?] | length' "$S" 2>/dev/null)"
-# CORRECT behavior: still 2 (semantically-equal entries deduped). BUG: 4.
-assert_eq "upgrade must NOT duplicate kit hooks after a key-order rewrite" "2" "$n1"
+# CORRECT behavior: still 1 (semantically-equal entry deduped). BUG: 2.
+assert_eq "upgrade must NOT duplicate kit hooks after a key-order rewrite" "1" "$n1"
 
 # ── (B) prune survives an array-valued command in user settings ──────────────
 SB2="$(sandbox)"; touch "$SB2/.bashrc"

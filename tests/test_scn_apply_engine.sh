@@ -36,8 +36,8 @@ assert_file "leak-guard.sh placed"  "$DIR/hooks/leak-guard.sh"
 assert_file "wrap-up.md placed"    "$DIR/commands/wrap-up.md"
 assert_file "shell-audit skill placed" "$DIR/skills/shell-audit"
 assert_file "statusline.sh placed" "$DIR/hooks/statusline.sh"
-assert_ok   "leak-guard registered TWICE (web tools + Bash)" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|map(select(endswith(\"/leak-guard.sh\")))|length==2' '$S' >/dev/null"
+assert_ok   "leak-guard registered ONCE (web tools only; Bash is command-guard's)" \
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|map(select(endswith(\"/leak-guard.sh\")))|length==1' '$S' >/dev/null"
 assert_ok   "kit denies present (secure-settings landed)" \
   bash -c "jq -e '((.permissions.deny // [])|length) > 0' '$S' >/dev/null"
 assert_ok   "statusLine wired" \
