@@ -93,6 +93,10 @@ Non-interactive (CI / scripted): `./install.sh --defaults` takes every default
 [`config/additions.json`](config/additions.json)) to install an **exact set**
 (unknown id aborts; empty installs none), and `CT_CONFIG_DIR` to pick the folder:
 
+> **Renamed ids:** the two guard additions are now `leak-guard` (was `leak-guard`)
+> and `command-guard` (was `command-guard`). The old ids are **not** aliased — update
+> any saved `CT_ADDITIONS` lists, or the install aborts on the unknown id.
+
 ```bash
 CT_CONFIG_DIR="$HOME/.claude-aka" CT_ADDITIONS="secure-settings leak-guard wrap-up" \
   ./install.sh --defaults
