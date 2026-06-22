@@ -113,9 +113,9 @@ assert_ok "the kit-dup hook was removed from that object (no duplicate)" \
   bash -c "jq -e '[.hooks.PreToolUse[].hooks[].command]|map(select(.==\"\$HOME/prof/hooks/harness-pointer.sh\"))|length==0' '$D3/settings.json' >/dev/null"
 
 # ── F. malformed .command (an object, not string/array): the dedup prune (tfiles) must
-#    be type-robust and not abort --apply. (A separate, pre-existing pruner on the
-#    deselect path emits a cosmetic jq warning on this exotic shape — out of PR-C scope,
-#    tracked as its own hardening. Here we assert the install still succeeds + stays valid.)
+#    be type-robust and not abort --apply. (The deselect-path pruner prune_hook_regs is now
+#    type-robust too — section G below; both shapes are handled identically.) Here we assert
+#    the install still succeeds + stays valid.
 SB4="$(sandbox)"; export HOME="$SB4"; D4="$SB4/prof"; mkdir -p "$D4/hooks"
 cat > "$D4/settings.json" <<'JSON'
 {"hooks":{"PreToolUse":[
@@ -126,5 +126,56 @@ CT_CONFIG_DIR="$D4" CT_ADDITIONS="harness-pointer" HOME="$SB4" \
   bash "$INSTALL" --apply --no-auth-inherit >"$SB4/log" 2>&1
 assert_eq "malformed .command (object): --apply exits 0 (dedup prune does not crash)" "0" "$?"
 assert_ok "settings.json still valid JSON after install" jq -e . "$D4/settings.json"
+
+# ── G. deselect-path pruner prune_hook_regs is type-robust against a malformed .command.
+#    prune_hook_regs (used on deselect/uninstall and the retired-kit-hook cleanup) matched
+#    a command by `contains($b)`; on an OBJECT-valued .command that aborted with a jq
+#    containment error (exit 5, empty output) — which under `set -euo pipefail` blanks the
+#    settings being threaded through the pipeline. The command is now normalized to a STRING
+#    first (string as-is, array argv joined over its string elements, any other shape → "")
+#    so containment is always string-vs-string. Tested at the function level (the cleanest
+#    red→green): a foreign object/array .command no longer crashes the pruner, a genuine kit
+#    reg is still pruned by basename, and the foreign reg is left untouched.
+PHR='{"hooks":{"PreToolUse":[
+  {"matcher":"Bash","hooks":[{"type":"command","command":{"oops":"object-not-string"}}]},
+  {"matcher":"Web","hooks":[{"type":"command","command":"bun /p/hooks/leak-guard.sh"}]}
+]}}'
+phr_out="$( ( set -euo pipefail; source "$INSTALL" >/dev/null 2>&1; printf '%s' "$PHR" | prune_hook_regs "leak-guard.sh" ) 2>"$SB4/phr.err" )"
+assert_eq "prune_hook_regs over an OBJECT .command exits 0 (no jq containment crash)" "0" "$?"
+assert_eq "prune_hook_regs emits no jq error on the object .command" "" "$(cat "$SB4/phr.err")"
+assert_ok "prune_hook_regs output is valid JSON (not blanked by the abort)" \
+  bash -c "printf '%s' '$phr_out' | jq -e . >/dev/null"
+assert_ok "the genuine kit reg (string .command) was still pruned by basename" \
+  bash -c "printf '%s' '$phr_out' | jq -e '[.hooks.PreToolUse[]?.hooks[]?.command|select(type==\"string\" and test(\"leak-guard\"))]|length==0' >/dev/null"
+assert_ok "the foreign object .command reg was left untouched (not a kit hook)" \
+  bash -c "printf '%s' '$phr_out' | jq -e '[.hooks.PreToolUse[]?.hooks[]?.command|select(type==\"object\")]|length==1' >/dev/null"
+# array argv whose elements include non-strings must also not crash join()
+PHR2='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":["bun",{"x":1},"/p/hooks/leak-guard.sh"]}]}]}}'
+( set -euo pipefail; source "$INSTALL" >/dev/null 2>&1; printf '%s' "$PHR2" | prune_hook_regs "leak-guard.sh" ) >"$SB4/phr2.out" 2>"$SB4/phr2.err"
+assert_eq "prune_hook_regs over an array .command with a non-string element exits 0" "0" "$?"
+assert_ok "array-form kit reg (filtered+joined) was pruned (hooks emptied)" \
+  bash -c "jq -e '(.hooks // {})==({})' '$SB4/phr2.out' >/dev/null"
+
+# Adjacent malformed structures must also not abort the pruner under set -euo pipefail —
+# the type handling mirrors prune_hook_regs_resolving, which is robust to ALL of these
+# (a non-array event value, a non-object .hooks member, a non-array inner .hooks). Each
+# would previously throw a jq error (Cannot iterate/index …) and blank the settings.
+phr_noabort() {  # <desc> <settings-json>
+  ( set -euo pipefail; source "$INSTALL" >/dev/null 2>&1; printf '%s' "$2" | prune_hook_regs "leak-guard.sh" ) >"$SB4/m.out" 2>"$SB4/m.err"
+  assert_eq "$1: prune_hook_regs exits 0 (no jq abort)" "0" "$?"
+  assert_eq "$1: no jq error on stderr" "" "$(cat "$SB4/m.err")"
+  assert_ok "$1: output is valid JSON" bash -c "jq -e . '$SB4/m.out' >/dev/null"
+}
+phr_noabort "event value is a string"        '{"hooks":{"PreToolUse":"oops"}}'
+phr_noabort "a .hooks member is a bare string" '{"hooks":{"PreToolUse":[{"matcher":"x","hooks":["bare-string"]}]}}'
+phr_noabort "a .hooks member is a number"     '{"hooks":{"PreToolUse":[{"matcher":"x","hooks":[42]}]}}'
+phr_noabort "inner .hooks is an object"       '{"hooks":{"PreToolUse":[{"matcher":"x","hooks":{"k":"v"}}]}}'
+phr_noabort "inner .hooks is null"            '{"hooks":{"PreToolUse":[{"matcher":"x","hooks":null}]}}'
+phr_noabort "inner .hooks key missing"        '{"hooks":{"PreToolUse":[{"matcher":"x"}]}}'
+phr_noabort "event value is null"             '{"hooks":{"PreToolUse":null}}'
+# regression: a well-formed reg sharing the event with a malformed sibling is still pruned
+phr_noabort "well-formed + malformed mix"     '{"hooks":{"PreToolUse":[{"matcher":"x","hooks":[42]},{"matcher":"W","hooks":[{"type":"command","command":"bun /p/hooks/leak-guard.sh"}]}]}}'
+assert_ok "mixed case: the genuine leak-guard reg was pruned" \
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[]?|select(type==\"object\" and (.command|type==\"string\") and (.command|test(\"leak-guard\")))]|length==0' '$SB4/m.out' >/dev/null"
 
 t_summary

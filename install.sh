@@ -143,11 +143,26 @@ idxs_to_subarray() {
 # Remove every settings hook registration whose command references basename $1,
 # then drop any event left empty. Kit hooks are matched by their unique file
 # name, so a user's own hooks (different command) are never touched.
+# Fully type-robust (mirrors prune_hook_regs_resolving): every shape assumption that
+# could abort jq on a malformed settings.json under `set -euo pipefail` is guarded —
+#   • the event VALUE may not be an array (a string/object/number) → left as-is, then
+#     dropped by the final non-empty-array select (a non-array event isn't a reg list);
+#   • the inner .hooks may not be an array → treated as empty;
+#   • a .hooks MEMBER may not be an object → short-circuited (never reaches .command);
+#   • the .command itself may be a non-string/array (the observed object shape) → cmdstr
+#     normalizes it to "" (string-as-is / array argv joined over its string elements / "").
+# So `contains($b)` is always string-vs-string and a foreign-shaped reg never crashes the
+# pruner (which would blank the settings threaded through the deselect pipeline).
 prune_hook_regs() {
   jq --arg b "$1" '
+    def cmdstr($c): (if ($c|type)=="array" then ([ $c[] | select(type=="string") ] | join(" ")) elif ($c|type)=="string" then $c else "" end);
     if (.hooks|type)=="object" then
       (.hooks |= ( to_entries
-        | map(.value |= map(select(((type=="object") and ((.hooks // []) | map((.command) as $c | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)) | any(contains($b)))) | not)))
+        | map(.value |= ( if type=="array"
+              then map(select(((type=="object")
+                    and ((if (.hooks|type)=="array" then .hooks else [] end)
+                         | any((type=="object") and (cmdstr(.command) | contains($b))))) | not))
+              else . end ))
         | map(select((.value|type)=="array" and (.value|length) > 0))
         | from_entries ))
       | (if (.hooks // {}) == {} then del(.hooks) else . end)
