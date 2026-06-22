@@ -787,16 +787,22 @@ apply_additions() {
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
   done
 
-  # 4d-pre1a. The shared egress-guard lib (hooks/lib/secret-patterns.json) is owned by
-  # NO single addition — it's placed whenever EITHER leak-guard or command-guard is selected.
-  # The per-addition deselect loop above can't remove it (neither guard's owned-paths
-  # list includes it), so deselecting BOTH guards would orphan it. Remove it only when
-  # NEITHER consumer remains.
+  # 4d-pre1a. The shared egress-guard libs (hooks/lib/secret-patterns.json and the
+  # compiled hooks/lib/org-egress.json sidecar) are owned by NO single addition — they're
+  # placed/compiled whenever EITHER leak-guard or command-guard is selected. The
+  # per-addition deselect loop above can't remove them (neither guard's owned-paths list
+  # includes them), so deselecting BOTH guards would orphan them — and a leftover
+  # org-egress.json would also make the rmdir below fail, persisting hooks/lib. Remove
+  # both only when NEITHER consumer remains.
   if ! is_selected leak-guard "$_sel_ids" && ! is_selected command-guard "$_sel_ids"; then
-    if [ -e "$config_dir/hooks/lib/secret-patterns.json" ]; then
-      rm -f "$config_dir/hooks/lib/secret-patterns.json"
-      ok "Removed shared egress-guard lib (no guard selected)"
-    fi
+    _egress_lib_removed=
+    for _lib in secret-patterns.json org-egress.json; do
+      if [ -e "$config_dir/hooks/lib/$_lib" ]; then
+        rm -f "$config_dir/hooks/lib/$_lib"
+        _egress_lib_removed=1
+      fi
+    done
+    [ -n "$_egress_lib_removed" ] && ok "Removed shared egress-guard lib (no guard selected)"
     rmdir "$config_dir/hooks/lib" 2>/dev/null || true
   fi
 

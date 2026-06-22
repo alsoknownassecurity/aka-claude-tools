@@ -108,8 +108,9 @@ the user's go-ahead.
   already in `<dir>`** (the one you migrated), then handles every detail you'd
   otherwise get wrong by hand: strips `"$comment"`; reconciles retired permissions
   against `config/managed-permissions.json` (adopt new / retire dropped / keep the
-  user's own); registers leak-guard **twice** (`WebSearch|WebFetch` + `Bash`);
-  registers command-guard with bun's **absolute** path (skipped with a notice if `bun`
+  user's own); registers leak-guard **once** (`WebSearch|WebFetch` — web-only; Bash
+  egress is owned by command-guard); registers command-guard with bun's **absolute**
+  path (skipped with a notice if `bun`
   is absent); merges the read-only `rtk-allowlist.json` for rtk-safe (never a
   blanket `Bash(rtk:*)`); copies the shell-audit
   skill and chmods its `audit.sh`; and seeds `aka-claude-tools.config` when a
