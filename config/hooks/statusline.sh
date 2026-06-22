@@ -320,16 +320,22 @@ NOW_EPOCH=$(date +%s)
         if [ -n "$sync_info" ]; then read -r ahead behind <<< "$sync_info"
         else ahead=0; behind=0; fi
         [ -z "$ahead" ] && ahead=0; [ -z "$behind" ] && behind=0
-        cat > "$_parallel_tmp/git.sh" << GITEOF
-branch='$branch'
-repo='$repo'
-stash_count=${stash_count:-0}
-dirty=${dirty:-0}
-ahead=${ahead:-0}
-behind=${behind:-0}
-last_commit_epoch=${last_commit_epoch:-0}
-is_git_repo=true
-GITEOF
+        # SHELL-QUOTE every value with printf %q before writing this sourced fragment:
+        # branch/repo are derived from the git ref + the repo dir/remote name, which an
+        # attacker can craft (a malicious branch or a maliciously-named clone dir) to
+        # break out of a raw single-quoted assignment and inject arbitrary code when the
+        # fragment is sourced below. %q is the bash-native equivalent of the `@sh` used
+        # for every other fragment; same bash process writes + sources, so it round-trips.
+        {
+          printf 'branch=%q\n'            "$branch"
+          printf 'repo=%q\n'              "$repo"
+          printf 'stash_count=%q\n'       "${stash_count:-0}"
+          printf 'dirty=%q\n'             "${dirty:-0}"
+          printf 'ahead=%q\n'             "${ahead:-0}"
+          printf 'behind=%q\n'            "${behind:-0}"
+          printf 'last_commit_epoch=%q\n' "${last_commit_epoch:-0}"
+          printf 'is_git_repo=true\n'
+        } > "$_parallel_tmp/git.sh"
     else
         echo "is_git_repo=false" > "$_parallel_tmp/git.sh"
     fi
@@ -438,7 +444,9 @@ if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
         fi
     fi
     if [ -f "$WEATHER_CACHE" ]; then
-        echo "weather_str='$(cat "$WEATHER_CACHE" 2>/dev/null)'" > "$_parallel_tmp/weather.sh"
+        # %q-quote the cache contents before writing this sourced fragment (same class
+        # as the git fragment above — never interpolate raw into a single-quoted assign).
+        printf 'weather_str=%q\n' "$(cat "$WEATHER_CACHE" 2>/dev/null)" > "$_parallel_tmp/weather.sh"
     else
         echo "weather_str='—'" > "$_parallel_tmp/weather.sh"
     fi
@@ -450,15 +458,18 @@ if [ "$MODE" = "normal" ]; then
     # 4. Usage data — prefer native rate_limits from CC JSON, fall back to OAuth API
     _usage_now=$NOW_EPOCH
     if [ "$has_native_rate_limits" = "true" ]; then
-        cat > "$_parallel_tmp/usage.sh" << USAGEEOF
-usage_5h=${native_usage_5h:-0}
-usage_5h_reset=${native_usage_5h_reset:-''}
-usage_7d=${native_usage_7d:-0}
-usage_7d_reset=${native_usage_7d_reset:-''}
-usage_extra_enabled=${native_usage_extra_enabled:-false}
-usage_extra_limit=${native_usage_extra_limit:-0}
-usage_extra_used=${native_usage_extra_used:-0}
-USAGEEOF
+        # %q-quote (defense-in-depth, same class as the git/weather fragments): these
+        # are CC-provided numerics/timestamps, but never interpolate raw into a sourced
+        # fragment regardless of the source's current trust level.
+        {
+          printf 'usage_5h=%q\n'            "${native_usage_5h:-0}"
+          printf 'usage_5h_reset=%q\n'      "${native_usage_5h_reset:-}"
+          printf 'usage_7d=%q\n'            "${native_usage_7d:-0}"
+          printf 'usage_7d_reset=%q\n'      "${native_usage_7d_reset:-}"
+          printf 'usage_extra_enabled=%q\n' "${native_usage_extra_enabled:-false}"
+          printf 'usage_extra_limit=%q\n'   "${native_usage_extra_limit:-0}"
+          printf 'usage_extra_used=%q\n'    "${native_usage_extra_used:-0}"
+        } > "$_parallel_tmp/usage.sh"
     else
         cache_age=999999
         [ -f "$USAGE_CACHE" ] && cache_age=$((_usage_now - $(get_mtime "$USAGE_CACHE")))
