@@ -23,6 +23,18 @@ warn() { printf '%s! %s%s\n' "$C_YLW" "$*" "$C_RST" >&2; }
 die()  { printf '%s✗ %s%s\n' "$C_RED" "$*" "$C_RST" >&2; exit 1; }
 hr()   { printf '%s────────────────────────────────────────────────────────%s\n' "$C_DIM" "$C_RST"; }
 
+# sha256_file <path> — print the bare lowercase hex sha256 of a file, portably (BSD +
+# GNU). Tries sha256sum (GNU / newer macOS), then shasum -a 256 (Perl — ships on macOS),
+# then openssl. Returns 1 (no output) if none is available, so callers treat empty as
+# "can't hash" and degrade. sha256 hex is implementation-independent, so this equals
+# bun's createHash('sha256').digest('hex') over the same bytes.
+sha256_file() {
+  if   command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum    >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl   >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else return 1; fi
+}
+
 # ── prompts (honor CT_NONINTERACTIVE=1 to take all defaults) ──────────────────
 # prompt VAR "Question" "default"
 prompt() {
