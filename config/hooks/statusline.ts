@@ -13,10 +13,13 @@
 //     truncated to the terminal width — by DISPLAY columns, not bytes.)
 //
 // TypeScript port of the original statusline.sh, run under `bun` (the same runtime
-// as command-guard.ts). It is a behaviour-preserving port: stdout is byte-identical
-// to the bash version for the same input + environment, EXCEPT where the bash
-// version was provably wrong about display width (wide-glyph/flag column counting in
-// the ambient line — now grapheme/width-aware; see stringWidth/truncateToWidth).
+// as command-guard.ts). It is a behaviour-preserving port: it reproduces the bash
+// version's output for the same input + environment, EXCEPT where the bash version
+// was provably wrong about display width (wide-glyph/flag column counting in the
+// ambient line — now grapheme/width-aware; see stringWidth/truncateToWidth). The
+// pure render layer is pinned by golden tests (tests/statusline.test.ts); the
+// original bash is deleted, so there is no byte-for-byte oracle in CI — equivalence
+// of the IO layer (clock, usage, weather) was checked by live-probe during review.
 //
 // There is no shell `eval`/`source` anywhere here, so the shell-injection class the
 // bash version defended against (printf %q / @sh quoting of branch/dir/weather into
@@ -664,7 +667,9 @@ export async function gather(input: HookInput, settings: Settings): Promise<Stat
   let tempUnit = settings.preferences?.temperatureUnit ?? '';
   if (tempUnit !== 'celsius' && tempUnit !== 'fahrenheit') tempUnit = '';
 
-  const hostShort = run('hostname', ['-s']).replace(/^HOST-/, '');
+  // Short hostname for the brand mark (e.g. AKA/dev); the mark falls back to a bare
+  // "AKA" when no hostname resolves (run() returns '').
+  const hostShort = run('hostname', ['-s']);
 
   // Run the independent IO groups concurrently. Location must resolve before weather
   // (weather reads the location cache), so they're sequenced inside one group; usage and
