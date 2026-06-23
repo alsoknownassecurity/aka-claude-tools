@@ -323,7 +323,7 @@ function caseAlternationPipes(toks: Tok[]): Set<number> {
       }
     } else {
       const w = t.v;
-      const wasCmdPos = atCmdPos;
+      const wasCmdPos: boolean = atCmdPos;
       if (w === 'case' && wasCmdPos) stack.push({ state: 'awaitIn' });
       else if (w === 'in' && top && top.state === 'awaitIn') top.state = 'pattern';
       else if (w === 'esac' && top) stack.pop();
