@@ -22,23 +22,21 @@ while IFS= read -r id; do
   assert_lit "README documents addition id: $id" "$id" "$README"
 done < <(jq -r '.additions[].id' "$ADDITIONS")
 
-# ── 2. Every addition has a row in the "What's in the box" table ────────────
-# The id check above passes if the id appears ANYWHERE (e.g. a code example or
-# the layout tree). The user-facing catalog is the table; assert each addition's
-# human NAME is bolded in a table row. This catches additions that exist but were
-# never given a table entry.
-while IFS= read -r name; do
-  [ -z "$name" ] && continue
-  # A table row starts with "| **". Assert SOME such row contains the addition's
-  # literal name. grep -F on the name (not a built regex) avoids metachar pitfalls
-  # — e.g. a name like "Harness pointer (opt-in)" whose "(opt-in)" would be parsed
-  # as a regex group and never match the literal text.
-  if grep -E '^\| \*\*' "$README" | grep -qF -- "$name"; then
-    pass "README 'What's in the box' table row for: $name"
+# ── 2. Every addition is listed in the on-by-default / opt-in catalog table ──
+# The id check above passes if the id appears ANYWHERE (e.g. a code example or a
+# linked path). The user-facing at-a-glance catalog is the markdown table; assert
+# each addition id appears in SOME table row (a line beginning with "|"). This
+# catches an addition that exists but was never given a catalog entry, while
+# tracking the lean README's id-based table rather than a bolded human-name row.
+while IFS= read -r id; do
+  [ -z "$id" ] && continue
+  # grep -F on the id (literal, not a built regex) avoids metachar pitfalls.
+  if grep -E '^\|' "$README" | grep -qF -- "$id"; then
+    pass "README catalog table lists addition: $id"
   else
-    fail "README 'What's in the box' table row for: $name" "no table row names it"
+    fail "README catalog table lists addition: $id" "no table row names it"
   fi
-done < <(jq -r '.additions[].name' "$ADDITIONS")
+done < <(jq -r '.additions[].id' "$ADDITIONS")
 
 # ── 3. Every install.sh flag is documented in README ────────────────────────
 # Flags are parsed in the `case "$arg" in` block; extract the real set rather
@@ -49,12 +47,14 @@ for flag in --defaults --no-auth-inherit --apply --alias; do
 done
 
 # ── 4. Env knobs are documented in README ───────────────────────────────────
-# CT_ADDITIONS (scripted selection) and CT_NONINTERACTIVE (the env equivalent of
-# --defaults) are user-facing levers; both should be discoverable in README.
-for env in CT_ADDITIONS CT_NONINTERACTIVE; do
-  assert_lit "install.sh references env knob: $env" "$env" "$INSTALL"
-  assert_lit "README documents env knob: $env" "$env" "$README"
-done
+# CT_ADDITIONS (scripted selection) is the user-facing env lever and must be
+# discoverable in README. CT_NONINTERACTIVE is the internal var the flags export
+# (--defaults/--apply/--alias); the README documents the user-facing --defaults
+# flag instead, so we assert CT_NONINTERACTIVE exists in install.sh but do NOT
+# require it in the lean README.
+assert_lit "install.sh references env knob: CT_ADDITIONS" "CT_ADDITIONS" "$INSTALL"
+assert_lit "README documents env knob: CT_ADDITIONS" "CT_ADDITIONS" "$README"
+assert_lit "install.sh references internal CT_NONINTERACTIVE" "CT_NONINTERACTIVE" "$INSTALL"
 
 # ── 5. Uninstall section describes deselect-to-uninstall (current behavior) ──
 # install.sh + test_uninstall.sh prove a re-run WITHOUT an addition removes its
