@@ -38,6 +38,16 @@ review, and test them.
   tools/audit-history.sh --repo ../aka-claude-tools-public --ref main
   ```
 
+- **`sync-public.sh`** — gated `dev → public` mirror once both repos share history.
+  Fast-forward-ONLY (aborts on divergence; never forces) and runs the `audit-history`
+  leak gate over the exact history before pushing `main` + tags. The protocol lives
+  here so every trigger applies the same rails; the `.github/workflows/sync-public.yml`
+  workflow runs it **manually** (`workflow_dispatch`) with a write-scoped deploy key,
+  keeping a human on the irreversible public push.
+  ```bash
+  DRY_RUN=1 PUB_URL=git@github.com:OWNER/aka-claude-tools.git tools/sync-public.sh
+  ```
+
 Both default the repo to the clone they live in and are fully overridable by env
 (`AKA_REPO`, `CLAUDE_CONFIG_DIR`, `AKA_PUBLIC`, `AKA_DEV`).
 

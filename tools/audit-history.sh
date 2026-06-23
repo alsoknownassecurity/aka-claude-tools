@@ -61,12 +61,22 @@ scan_hist() {  # $1 = regex → distinct "file: line" context hits across all hi
 extract() { grep -oE -e "$FAIL_RE" 2>/dev/null || true; }
 
 blob_hits="$(scan_hist "$FAIL_RE")"
-msg_hits="$(git log --format='%H%n%B' "$REF" | grep -InE -e "$FAIL_RE" 2>/dev/null || true)"
+# Scan commit author/committer IDENTITY (%an/%ae/%cn/%ce) alongside the message
+# (%B): a leaked name/email in the identity headers is a real published surface
+# the message-only scan misses (e.g. a commit re-introduced under a real address).
+msg_hits="$(git log --format='%H%n%an %ae%n%cn %ce%n%B' "$REF" | grep -InE -e "$FAIL_RE" 2>/dev/null || true)"
+# Tree entry PATHNAMES are published in tree objects; a leak in a FILENAME (e.g.
+# notes-for-<name>.md, /Users/<name>/…) matches neither the blob-content nor the
+# message/identity scan, so scan the paths too.
+path_hits="$(for c in $(git rev-list "$REF"); do git ls-tree -r --name-only "$c"; done | sort -u | grep -InE -e "$FAIL_RE" 2>/dev/null || true)"
+# NOTE (documented limitation): this does not scan raw commit-object headers
+# (gpgsig/mergetag/encoding) or nested tag-of-tag objects — published-but-rare
+# surfaces, absent in this repo (no signed-tag merges, no tag-of-tags).
 warn_hits="$(scan_hist "$LEAK_INFRA")"
 
-# Distinct shaped values found anywhere (blobs + messages), then set-diff vs the
-# allowlist. comm needs sorted, newline-delimited inputs (both already sort -u'd).
-found="$(printf '%s\n%s\n' "$blob_hits" "$msg_hits" | extract | sort -u | grep -v '^$' || true)"
+# Distinct shaped values found anywhere (blobs + identity/messages + paths), then
+# set-diff vs the allowlist. comm needs sorted, newline-delimited inputs.
+found="$(printf '%s\n%s\n%s\n' "$blob_hits" "$msg_hits" "$path_hits" | extract | sort -u | grep -v '^$' || true)"
 unexpected="$(comm -23 <(printf '%s\n' "$found" | grep -v '^$') <(printf '%s\n' "$allow_list" | grep -v '^$') || true)"
 suppressed="$(comm -12 <(printf '%s\n' "$found" | grep -v '^$') <(printf '%s\n' "$allow_list" | grep -v '^$') || true)"
 missing="$(comm -13 <(printf '%s\n' "$found" | grep -v '^$') <(printf '%s\n' "$allow_list" | grep -v '^$') || true)"
@@ -77,7 +87,7 @@ if [ -n "$unexpected" ]; then
   echo "✗ FAIL — shaped secret/identifier value(s) NOT in the test-fixture allowlist:"
   printf '%s\n' "$unexpected" | sed 's/^/    /'
   echo "  appearing at:"
-  { printf '%s\n' "$blob_hits"; printf '%s\n' "$msg_hits"; } \
+  { printf '%s\n' "$blob_hits"; printf '%s\n' "$msg_hits"; printf '%s\n' "$path_hits"; } \
     | grep -F -f <(printf '%s\n' "$unexpected") 2>/dev/null | sort -u | sed 's/^/    /' || true
   echo
 fi

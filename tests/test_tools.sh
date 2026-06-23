@@ -43,6 +43,23 @@ msgrepo="$(sandbox)/msg"; git init -q "$msgrepo"
 echo ok > "$msgrepo/f"; gitc "$msgrepo" add .; gitc "$msgrepo" commit -qm "add key $ANT"
 assert_fail "audit FAILS on a secret in a commit message" "$AR" --repo "$msgrepo" --ref HEAD
 
+# A leaked identity in the commit AUTHOR/COMMITTER headers (clean blob + message)
+# is still caught — identity is a published surface, not just message/blob text.
+idrepo="$(sandbox)/id"; git init -q "$idrepo"
+echo ok > "$idrepo/f"
+git -C "$idrepo" -c user.email=leaker@evil.example -c user.name=leaker add .
+git -C "$idrepo" -c user.email=leaker@evil.example -c user.name=leaker commit -qm "perfectly clean message"
+assert_fail "audit FAILS on a leaked identity in commit author/committer" \
+  env AKA_LEAK_EXTRA='leaker@evil' "$AR" --repo "$idrepo" --ref HEAD
+
+# A leaked identifier in a PATHNAME (clean blob + message) is still caught — tree
+# entry names are a published surface, not just blob content.
+pathrepo="$(sandbox)/pathleak"; git init -q "$pathrepo"; mkdir -p "$pathrepo/sub"
+echo "clean content" > "$pathrepo/sub/notes-leaker-host.md"
+gitc "$pathrepo" add .; gitc "$pathrepo" commit -qm "clean content, leaky path"
+assert_fail "audit FAILS on a leaked identifier in a filename/path" \
+  env AKA_LEAK_EXTRA='leaker-host' "$AR" --repo "$pathrepo" --ref HEAD
+
 # ── audit-history allowlist (tests/audit-allow.txt) — value-pinned suppression ──
 REAL="AKIA""1234567890ABCDEF"          # a DIFFERENT AWS-shaped value, NOT a known fake
 # (a) an allowlisted fake alone → suppressed → PASS.

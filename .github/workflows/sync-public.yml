@@ -1,0 +1,52 @@
+name: sync-public
+
+# MANUAL only — never on push. A human triggers the dev→public mirror from the
+# Actions tab (or `gh workflow run sync-public.yml`), keeping a person in the loop
+# for the irreversible public push. The gate (ff-only + audit-history) lives in
+# tools/sync-public.sh so the rails are identical wherever it runs.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — run the gate + suite but do NOT push"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read   # default token only READS this (dev) repo; the public push uses the deploy key
+
+concurrency:
+  group: sync-public
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # full history — the leak gate walks all reachable commits
+
+      - uses: oven-sh/setup-bun@v2   # the flow suite's hooks need bun
+
+      - name: Configure the public-repo deploy key (write-scoped to aka-claude-tools only)
+        env:
+          # Pass via env, not textual ${{ }} substitution into the script body.
+          PUBLIC_DEPLOY_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$PUBLIC_DEPLOY_KEY" > ~/.ssh/public_deploy
+          chmod 600 ~/.ssh/public_deploy
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Gated dev→public sync
+        env:
+          # SSH (deploy key) is used ONLY for the public remote; dev (origin) stays on the
+          # checkout's HTTPS token. So the deploy key can touch exactly one public repo.
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/public_deploy -o IdentitiesOnly=yes"
+          PUB_URL: git@github.com:alsoknownassecurity/aka-claude-tools.git
+          AKA_LEAK_EXTRA: ${{ secrets.AKA_LEAK_EXTRA }}
+          RUN_TESTS: "1"
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: bash tools/sync-public.sh
