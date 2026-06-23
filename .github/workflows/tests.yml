@@ -10,15 +10,13 @@ permissions:
 
 jobs:
   flow:
-    name: pipeline flow tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      # Run on BOTH GNU (ubuntu) and BSD (macos) userland. The hooks are now .ts
-      # (statusline's BSD/GNU `date`/`stat` forks are gone — it uses Date/Intl), so the
-      # macOS leg is the way platform drift in the Intl/fetch/execFileSync paths surfaces.
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: pipeline flow tests (ubuntu-latest)
+    # ubuntu (GNU userland) ONLY. The macOS (BSD) leg was dropped: the dev fleet is
+    # all-Mac, so `bash tests/run.sh` run locally already exercises the BSD path on
+    # every change — the macos-latest runner (10x minute multiplier) just paid to
+    # repeat coverage we have for free. GNU userland is the leg we CAN'T reproduce
+    # locally, and it's what matters for the Linux users this installer ships to.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # bun is a real dependency of the command-guard + statusline hooks (.ts files):
