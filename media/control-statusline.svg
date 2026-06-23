@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 230" font-family="ui-monospace, 'Geist Mono', monospace">
+  <rect width="1100" height="230" rx="14" fill="#161E27" stroke="#FFFFFF" stroke-opacity="0.10"/>
+  <circle cx="30" cy="30" r="7" fill="#F76F68"/><circle cx="54" cy="30" r="7" fill="#DD6B20"/><circle cx="78" cy="30" r="7" fill="#00E0B8"/>
+  <text x="108" y="36" font-size="16" fill="#6B7D8F">statusline — context + usage gauges, live</text>
+  <line x1="0" y1="58" x2="1100" y2="58" stroke="#FFFFFF" stroke-opacity="0.08"/>
+  <g font-size="20">
+    <text x="32" y="104"><tspan fill="#6B7D8F">╭ </tspan><tspan fill="#00E0B8">AKA</tspan><tspan fill="#6B7D8F"> ▸ </tspan><tspan fill="#6AD9FF">acme-api/main</tspan><tspan fill="#B0C7E2">  *2 ↑1 </tspan><tspan fill="#6B7D8F">│ </tspan><tspan fill="#8A98FF">Opus 4.8</tspan></text>
+    <text x="32" y="142"><tspan fill="#6B7D8F">│ </tspan><tspan fill="#B0C7E2">CTX </tspan><tspan fill="#00E0B8">▓▓▓▓▓▓▓▓</tspan><tspan fill="#3D4E5E">░░░░</tspan><tspan fill="#DFE9F6"> 62% </tspan><tspan fill="#6B7D8F">│ </tspan><tspan fill="#6AD9FF">5H 18%</tspan><tspan fill="#6B7D8F"> ↻2h │ </tspan><tspan fill="#6AD9FF">WK 44%</tspan><tspan fill="#6B7D8F"> ↻3d</tspan></text>
+    <text x="32" y="180"><tspan fill="#6B7D8F">╰ </tspan><tspan fill="#B0C7E2">09:48   21°C   SF</tspan></text>
+  </g>
+</svg>

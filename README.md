@@ -1,5 +1,7 @@
 # aka-claude-tools
 
+<p align="center"><img src="media/banner.svg" alt="aka-claude-tools — the floor a fresh Claude Code should start from: clean context, locked doors, guarded exits. MIT · needs jq + bun · v0.2.0." width="100%"></p>
+
 **The floor a fresh Claude Code should start from** — clean context, locked
 credentials, guarded egress. Installed into its own **isolated profile**, so your
 existing setup is never touched. Pick-and-choose, no lock-in.
@@ -19,30 +21,31 @@ seconds. No framework, nothing proprietary, nothing phones home.
 
 ## Quick start
 
+**Two ways in, same destination.**
+
+**Path A — hand it to your AI (recommended; no manual clone).** In an existing,
+logged-in Claude Code session, point it at the repo:
+
+> Set up aka-claude-tools from github.com/alsoknownassecurity/aka-claude-tools —
+> read its agent-install.md and set up a new hardened profile for me.
+
+It clones the repo, reads the guide, checks what you already have, migrates anything
+custom, and runs the installer — no commands to type, no manual clone. Spec:
+[`agent-install.md`](agent-install.md).
+
+**Path B — clone it and run the installer yourself.**
+
 ```bash
 git clone git@github.com:alsoknownassecurity/aka-claude-tools.git
 cd aka-claude-tools
-```
-
-Nothing has run yet — you've only downloaded it. Then, **two ways in, same destination:**
-
-**Path A — hand it to your AI (recommended).** In an existing, logged-in Claude Code
-session, say:
-
-> Read agent-install.md and set up a new hardened profile for me.
-
-It reads the guide, checks what you already have, migrates anything custom, and runs the
-installer — no commands to type. Spec: [`agent-install.md`](agent-install.md).
-
-**Path B — run the installer.**
-
-```bash
 ./install.sh             # interactive
 ./install.sh --defaults  # take every default + the recommended six
+./install.sh --version   # print the kit version (v0.2.0)
 ```
 
-It asks where to put the profile (default `~/.claude-aka`), what to name the launcher
-(default `aka`), and which additions to enable.
+Nothing runs on clone — the kit is all there to read first. The installer asks where to
+put the profile (default `~/.claude-aka`), what to name the launcher (default `aka`), and
+which additions to enable.
 
 **Launch it** — `aka` opens a Claude Code with its own settings, hooks, and history.
 Your normal `claude` is completely untouched.
@@ -54,9 +57,20 @@ you're only assuming works:
 - Check the status bar → context + rate-limit gauges should show.
 - Try `curl … | bash` → command-guard should **block** it.
 
+<p align="center">
+  <img src="media/control-ssh-refused.svg" alt="secure-settings refusing to read ~/.ssh/id_rsa — Read(~/.ssh/**) is in permissions.deny" width="100%"><br>
+  <img src="media/control-statusline.svg" alt="statusline showing live context fill and rate-limit gauges" width="100%"><br>
+  <img src="media/control-curl-bash-blocked.svg" alt="command-guard blocking curl piped into bash" width="100%">
+</p>
+
+Prefer a step-by-step walkthrough? See the **[safe-setup carousel](media/decks/safe-setup.pdf)** (PDF).
+
 ## What's inside
 
-Nine additions, grouped by what they do. **●** on by default · **○** opt-in.
+<p align="center"><img src="media/whats-inside.svg" alt="Nine additions in five groups. On by default: rtk-safe, statusline, secure-settings, leak-guard, command-guard, shell-audit. Opt-in: /wrap-up, secure-deep-research, harness-pointer." width="100%"></p>
+
+Nine additions, grouped by what they do. **●** on by default · **○** opt-in. Prefer a
+visual tour? See the **[what's-inside carousel](media/decks/whats-inside.pdf)** (PDF).
 
 **Clean context** — keep the model's working memory for the work.
 - **● rtk-safe** — rewrites chatty commands (giant listings, logs) into compact summaries
@@ -99,6 +113,8 @@ The full manifest — what each piece places, its settings — is
 
 This isn't a platform you adopt. It's the **floor** — clean context, locked credentials,
 guarded egress — that a coding agent ought to start from.
+
+<p align="center"><img src="media/isolated-profile.svg" alt="Isolated profile: the aka launcher points CLAUDE_CONFIG_DIR at ~/.claude-aka — a hardened profile with its own settings, hooks, history and the guards on — while your real ~/.claude stays untouched." width="100%"></p>
 
 - **Isolated.** Each profile is its own `CLAUDE_CONFIG_DIR` folder with its own settings,
   hooks, and history, launched by alias. Your real `~/.claude` is never touched unless you

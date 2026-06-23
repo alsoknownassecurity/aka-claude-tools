@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 264" font-family="ui-monospace, 'Geist Mono', monospace">
+  <rect width="1100" height="264" rx="14" fill="#161E27" stroke="#FFFFFF" stroke-opacity="0.10"/>
+  <circle cx="30" cy="30" r="7" fill="#F76F68"/><circle cx="54" cy="30" r="7" fill="#DD6B20"/><circle cx="78" cy="30" r="7" fill="#00E0B8"/>
+  <text x="108" y="36" font-size="16" fill="#6B7D8F">secure-settings — permissions.deny</text>
+  <line x1="0" y1="58" x2="1100" y2="58" stroke="#FFFFFF" stroke-opacity="0.08"/>
+  <!-- request -->
+  <text x="32" y="106" font-size="18"><tspan fill="#8A98FF">agent ▸ </tspan><tspan fill="#DFE9F6">Read</tspan><tspan fill="#B0C7E2"> ~/.ssh/id_rsa</tspan></text>
+  <!-- deny panel -->
+  <g transform="translate(32,128)">
+    <rect width="1036" height="108" rx="10" fill="#F76F68" fill-opacity="0.10" stroke="#F76F68" stroke-opacity="0.5"/>
+    <circle cx="30" cy="34" r="9" fill="none" stroke="#F76F68" stroke-width="2.5"/>
+    <line x1="24" y1="28" x2="36" y2="40" stroke="#F76F68" stroke-width="2.5"/>
+    <text x="52" y="40" font-size="17" font-weight="700" fill="#F76F68">REFUSED · permission denied</text>
+    <text x="52" y="72" font-size="16" fill="#E6EAF2">Read(~/.ssh/**) is in permissions.deny — credential paths are off-limits.</text>
+    <text x="52" y="96" font-size="16" fill="#B0C7E2">SSH keys, ~/.aws, .env, keychains: same rule. The agent can't read them.</text>
+  </g>
+</svg>
