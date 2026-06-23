@@ -28,12 +28,12 @@ KIT_ENV_KEY="$(jq -r --arg f "$SETF" '.env | keys[0] // empty' "$REPO_ROOT/confi
 # ── 1. Install the full set: hook + statusLine + perm/env + two keepers ───────
 run "secure-settings leak-guard statusline wrap-up harness-pointer"
 assert_eq "install exits 0" "0" "$?"
-assert_file "X(hook) leak-guard.sh deployed"          "$PROFILE/hooks/leak-guard.sh"
+assert_file "X(hook) leak-guard.ts deployed"          "$PROFILE/hooks/leak-guard.ts"
 assert_file "X(statusLine) statusline.ts deployed"   "$PROFILE/hooks/statusline.ts"
 assert_file "keeper harness-pointer.sh deployed" "$PROFILE/hooks/harness-pointer.sh"
 assert_file "keeper wrap-up.md deployed"             "$PROFILE/commands/wrap-up.md"
 assert_ok "leak-guard hook registered" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$S' >/dev/null"
 assert_ok "statusLine registered (points at statusline.ts)" \
   bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"
 assert_lit "secure-settings deny rule present"  "$KIT_DENY" "$S"
@@ -56,14 +56,14 @@ assert_eq "deselect re-run exits 0" "0" "$?"
 assert_ok "settings.json still valid JSON after deselect" jq -e . "$S"
 
 # X's FILES removed.
-[ -e "$PROFILE/hooks/leak-guard.sh" ] && fail "leak-guard hook file removed on deselect" "still present" \
+[ -e "$PROFILE/hooks/leak-guard.ts" ] && fail "leak-guard hook file removed on deselect" "still present" \
                                      || pass "leak-guard hook file removed on deselect"
 [ -e "$PROFILE/hooks/statusline.ts" ] && fail "statusline file removed on deselect" "still present" \
                                       || pass "statusline file removed on deselect"
 
 # X's hook registration pruned.
 assert_ok "leak-guard registration pruned from .hooks" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\")) | not' '$S' >/dev/null"
 # X's statusLine pruned.
 assert_ok "statusLine pruned from settings" \
   bash -c "jq -e '((.statusLine.command // \"\") | endswith(\"/statusline.ts\")) | not' '$S' >/dev/null"
@@ -95,7 +95,7 @@ if diff <(jq -S . "$SB/after1.json") <(jq -S . "$S") >/dev/null 2>&1; then
 else
   fail "re-deselect is idempotent (settings.json unchanged)" "settings differ on second deselect"
 fi
-[ -e "$PROFILE/hooks/leak-guard.sh" ] && fail "leak-guard stays removed on re-deselect" "reappeared" \
+[ -e "$PROFILE/hooks/leak-guard.ts" ] && fail "leak-guard stays removed on re-deselect" "reappeared" \
                                      || pass "leak-guard stays removed on re-deselect"
 
 t_summary

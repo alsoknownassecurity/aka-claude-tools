@@ -22,25 +22,25 @@ run() { CT_ADDITIONS="$1" SHELL=/bin/bash HOME="$SB" \
 # file in additions.json. leak-guard + harness-pointer are both hook additions.
 WG_HOOK="$(jq -r '.additions[]|select(.id=="leak-guard")|.hook' "$ADDITIONS")"
 HP_HOOK="$(jq -r '.additions[]|select(.id=="harness-pointer")|.hook' "$ADDITIONS")"
-assert_eq "fixture: leak-guard ships hooks/leak-guard.sh" "hooks/leak-guard.sh" "$WG_HOOK"
+assert_eq "fixture: leak-guard ships hooks/leak-guard.ts" "hooks/leak-guard.ts" "$WG_HOOK"
 assert_eq "fixture: harness-pointer ships hooks/harness-pointer.sh" "hooks/harness-pointer.sh" "$HP_HOOK"
 
 # ── (1) Install both kit hook additions (secure-settings gives a base settings.json).
 run "secure-settings leak-guard harness-pointer"
 assert_eq "initial install exits 0" "0" "$?"
-assert_file "leak-guard hook deployed"      "$P/hooks/leak-guard.sh"
+assert_file "leak-guard hook deployed"      "$P/hooks/leak-guard.ts"
 assert_file "harness-pointer hook deployed" "$P/hooks/harness-pointer.sh"
 assert_lit  "deployed leak-guard carries managed marker" \
-  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.sh"
+  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.ts"
 
 # ── (2) Make the profile MESSY ───────────────────────────────────────────────
 # (a) leak-guard LOSES its managed marker (hand-edited / pre-marker era), but stays
 #     a kit-owned hook in the manifest. We'll deselect it below — it must still be
 #     removed via the manifest-driven (by-path) cleanup, not the marker self-clean.
-grep -v 'aka-claude-tools:managed-hook' "$P/hooks/leak-guard.sh" > "$P/hooks/leak-guard.sh.tmp" \
-  && mv "$P/hooks/leak-guard.sh.tmp" "$P/hooks/leak-guard.sh"
+grep -v 'aka-claude-tools:managed-hook' "$P/hooks/leak-guard.ts" > "$P/hooks/leak-guard.ts.tmp" \
+  && mv "$P/hooks/leak-guard.ts.tmp" "$P/hooks/leak-guard.ts"
 assert_nlit "leak-guard marker stripped (messy fixture)" \
-  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.sh"
+  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.ts"
 
 # (b) An ORPHAN hook the kit never shipped: no marker, not in additions.json. The
 #     cleanup must never touch or crash on it. Also register it in settings so we
@@ -69,11 +69,11 @@ assert_eq "messy cleanup re-run exits 0 (never crashes on orphans)" "0" "$rc"
 assert_ok "settings.json still valid JSON after cleanup" jq -e . "$P/settings.json"
 
 # (1) Deselected kit-owned hook removed EVEN THOUGH its marker was stripped.
-[ -e "$P/hooks/leak-guard.sh" ] \
+[ -e "$P/hooks/leak-guard.ts" ] \
   && fail "deselected kit hook removed despite missing marker" "still present" \
   || pass "deselected kit hook removed despite missing marker"
 assert_ok "deselected leak-guard registration pruned" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$P/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\")) | not' '$P/settings.json' >/dev/null"
 
 # (2) MARKED kit hook the kit no longer ships removed by marker self-clean.
 [ -e "$P/hooks/old-kit.sh" ] \

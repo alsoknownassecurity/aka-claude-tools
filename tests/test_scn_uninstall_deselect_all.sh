@@ -25,13 +25,13 @@ run() { CT_ADDITIONS="$1" SHELL=/bin/bash HOME="$SB" \
 # ── (1) full install ─────────────────────────────────────────────────────────
 run "$SEL"; rc1=$?
 assert_eq   "full install exits 0" "0" "$rc1"
-assert_file "leak-guard hook placed"          "$P/hooks/leak-guard.sh"
+assert_file "leak-guard hook placed"          "$P/hooks/leak-guard.ts"
 assert_file "harness-pointer hook placed" "$P/hooks/harness-pointer.sh"
 assert_file "statusline hook placed"         "$P/hooks/statusline.ts"
 assert_file "wrap-up command placed"         "$P/commands/wrap-up.md"
 assert_file "shell-audit skill placed"       "$P/skills/shell-audit"
 assert_ok   "leak-guard registered in settings" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$P/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$P/settings.json' >/dev/null"
 assert_ok   "statusLine wired in settings" \
   bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$P/settings.json' >/dev/null"
 # secure-settings shipped permission rules — confirm some landed (so we can prove
@@ -66,7 +66,7 @@ assert_eq "deselect-all run exits 0" "0" "$rc2"
 assert_file "profile dir still exists after deselect-all" "$P"
 
 # 3b. Every kit-owned FILE removed.
-for f in hooks/leak-guard.sh hooks/harness-pointer.sh hooks/statusline.ts \
+for f in hooks/leak-guard.ts hooks/harness-pointer.sh hooks/statusline.ts \
          commands/wrap-up.md skills/shell-audit; do
   if [ -e "$P/$f" ]; then fail "kit file removed: $f" "still present"
   else pass "kit file removed: $f"; fi
@@ -75,7 +75,7 @@ done
 # 3c. Every kit SETTINGS entry pruned. Settings stays valid JSON.
 assert_ok "settings.json still valid JSON after deselect-all" jq -e . "$P/settings.json"
 assert_ok "leak-guard registration pruned" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$P/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\")) | not' '$P/settings.json' >/dev/null"
 assert_ok "harness-pointer registration pruned" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/harness-pointer.sh\")) | not' '$P/settings.json' >/dev/null"
 assert_ok "statusLine pruned from settings" \

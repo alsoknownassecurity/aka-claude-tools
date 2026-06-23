@@ -1,40 +1,38 @@
 #!/usr/bin/env bash
 # test_egress_config_robustness.sh — two PR-review hardenings for the org-egress path,
-# both exercised on the BUN-LESS floor (web-only install, no command-guard):
+# exercised with a web-only install (leak-guard selected, no command-guard):
 #   #47-a  A config that fails to SOURCE must not silently ship an empty "tier inactive"
 #          sidecar — install warns loudly and still exits 0 (tier inactive until fixed).
-#   #47-b  leak-guard gains the stale-config detection command-guard already has: when
+#   #47-b  leak-guard has the stale-config detection command-guard also has: when
 #          aka-claude-tools.config drifts from the compiled sidecar, leak-guard WARNS
-#          (advisory, never blocks). The sidecar's sourceHash is now computed with a
-#          PORTABLE sha256 (not bun), so it is populated even on a bun-less install.
+#          (advisory, never blocks). The sidecar's sourceHash is computed with a portable
+#          sha256 in install.sh and re-hashed by leak-guard.ts via bun's createHash over
+#          the same raw config bytes — implementation-independent, so they agree.
 # Fully sandboxed: fake $HOME, throwaway profile; never touches a real ~/.claude*.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "test_egress_config_robustness:"
 
-# Force the bun-less floor: drop bun's dir from PATH so install computes sourceHash via
-# the shell sha256 and leak-guard re-hashes the same way — the exact web-only scenario.
-NOBUN_PATH="$PATH"
-if command -v bun >/dev/null 2>&1; then
-  _bd="$(cd "$(dirname "$(command -v bun)")" && pwd)"
-  NOBUN_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$_bd" | paste -sd: -)"
+# Both guards are .ts now (leak-guard requires bun). Skip if bun is absent — install would
+# abort on the leak-guard hard-dependency gate and there'd be no hook to exercise.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "  note: bun absent — leak-guard requires bun; skipping (SUITE NOT EXERCISED)."
+  exit 0
 fi
-PATH="$NOBUN_PATH" command -v bun >/dev/null 2>&1 \
-  && echo "  note: bun still on PATH (symlinked elsewhere) — sourceHash is via sha256 regardless." \
-  || echo "  (bun removed from PATH — genuine bun-less floor)"
+BUN_BIN="$(command -v bun)"
 
 # inst <config-body>  → installs leak-guard (web-only, no command-guard) with the given
-# aka-claude-tools.config pre-placed, under the bun-less PATH. Sets SB / PROFILE / RC.
+# aka-claude-tools.config pre-placed. Sets SB / PROFILE / RC.
 inst() {
   SB="$(sandbox)"; touch "$SB/.bashrc"
   PROFILE="$SB/.claude-aka"; mkdir -p "$PROFILE"
   printf '%s\n' "$1" > "$PROFILE/aka-claude-tools.config"
-  PATH="$NOBUN_PATH" SHELL=/bin/bash HOME="$SB" CT_ADDITIONS="secure-settings leak-guard" \
+  SHELL=/bin/bash HOME="$SB" CT_ADDITIONS="secure-settings leak-guard" \
     CT_NONINTERACTIVE=1 bash "$REPO_ROOT/install.sh" --defaults --no-auth-inherit >"$SB/log" 2>&1
   RC=$?
 }
-# run a web query through the installed leak-guard; capture STDERR only.
+# run a web query through the installed leak-guard.ts; capture STDERR only.
 lg_err() { printf '{"tool_name":"WebSearch","tool_input":{"query":"%s"}}' "$1" \
-  | PATH="$NOBUN_PATH" bash "$PROFILE/hooks/leak-guard.sh" 2>&1 >/dev/null; }
+  | "$BUN_BIN" "$PROFILE/hooks/leak-guard.ts" 2>&1 >/dev/null; }
 
 # ── #47-a: a config that cannot be sourced → loud warning, NOT a silent disable ──────
 inst 'CT_EGRESS_PATTERNS="unterminated'   # unclosed quote → source fails (syntax error)
@@ -60,11 +58,11 @@ assert_eq   "syntax-error-after-pattern: install exits 0" "0" "$RC"
 assert_grep "syntax-error-after-pattern: source failure is surfaced, not hidden" \
   'could not be sourced|sourced with an error' "$SB/log"
 
-# ── #47-b: bun-less install still populates a real sha256 sourceHash ─────────────────
+# ── #47-b: install populates a real sha256 sourceHash the .ts guard can re-derive ───────
 inst 'CT_EGRESS_PATTERNS="acme\.internal"'
 assert_eq   "valid config: install exits 0" "0" "$RC"
 SC="$PROFILE/hooks/lib/org-egress.json"
-assert_ok   "bun-less install: sidecar carries a 64-char sha256 sourceHash" \
+assert_ok   "sidecar carries a 64-char sha256 sourceHash" \
   bash -c "jq -e '(.sourceHash|type==\"string\") and (.sourceHash|length==64)' '$SC' >/dev/null"
 
 # unchanged config → leak-guard emits NO stale warning
@@ -84,7 +82,7 @@ esac
 
 # advisory only — a stale config must NEVER change the verdict (benign query still allowed)
 printf '{"tool_name":"WebSearch","tool_input":{"query":"a benign query"}}' \
-  | PATH="$NOBUN_PATH" bash "$PROFILE/hooks/leak-guard.sh" >/dev/null 2>&1; rc=$?
+  | "$BUN_BIN" "$PROFILE/hooks/leak-guard.ts" >/dev/null 2>&1; rc=$?
 assert_eq "stale config is advisory: benign query still allowed (exit 0, not blocked)" "0" "$rc"
 
 t_summary

@@ -25,7 +25,7 @@
 // bash version defended against (printf %q / @sh quoting of branch/dir/weather into
 // sourced fragments) does not exist in this port — typed JSON.parse + argv-array
 // subprocesses replace it. This is NOT a security boundary; requiring bun here is
-// acceptable (leak-guard, the security web guard, stays pure bash).
+// acceptable (the security guards leak-guard + command-guard also require bun).
 //
 // Resolves its config dir from $CLAUDE_CONFIG_DIR so it works in any isolated config
 // folder created by the aka-claude-tools installer (defaults to ~/.claude).

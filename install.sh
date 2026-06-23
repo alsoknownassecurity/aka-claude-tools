@@ -648,20 +648,22 @@ compile_org_sidecar() {
     case "$pat" in
       *$'\n'*) die "CT_EGRESS_PATTERNS in $cfg must be a single line (multiline patterns are rejected)." ;;
     esac
-    # STRICT portable-subset validator. The pattern is matched by TWO engines —
-    # leak-guard's grep -E (POSIX ERE, BSD+GNU) for web, command-guard's JS RegExp for
-    # Bash. Constructs that are co-valid but NON-equivalent across them diverge SILENTLY
-    # (blocked on one surface, leaked on the other; BSD-vs-GNU-dependent), so reject the
-    # known divergent classes and keep patterns in the subset where the two engines
-    # AGREE (not a proof of full equivalence — the same co-validity caveat
-    # secret-patterns.json documents: use [0-9A-Za-z], not \d/\s):
+    # STRICT portable-subset validator. Both runtime consumers are now JS RegExp
+    # (leak-guard.ts for web egress, command-guard.ts for Bash), so the pattern no longer
+    # crosses a grep-vs-JS engine boundary at runtime. The portable-subset check is kept as
+    # a conservative input contract: the installer ALSO compiles the pattern as a POSIX ERE
+    # via grep -E (below) as a defense-in-depth syntax check, and the subset is exactly where
+    # grep -E and JS RegExp agree — so rejecting the known divergent classes keeps a pattern
+    # that passes the grep compile check from behaving differently in the JS guards (and
+    # matches the co-validity caveat secret-patterns.json documents: use [0-9A-Za-z],
+    # not \d/\s):
     #   \\[0-9A-Za-z]  backslash shorthand/backref — \d \w \s \b … and \1 backrefs
     #   \<  \>         GNU word boundaries (live in grep, not JS)
     #   [[:            POSIX classes ([[:alpha:]] …)
     #   (?             lookaround / non-capturing groups
     # \. \( \| etc. (backslash + a non-alphanumeric, non-angle metachar) are fine.
     if printf '%s' "$pat" | grep -qE '\\[0-9A-Za-z<>]|\[\[:|\(\?'; then
-      die "CT_EGRESS_PATTERNS in $cfg uses a non-portable regex construct (a \\d/\\w/\\s/\\b shorthand or \\N backref, a \\<\\> word boundary, a POSIX class [[:…:]], or lookaround/(?…)). These behave differently in grep -E vs JavaScript, so the web and Bash guards would diverge silently. Use the portable subset — e.g. [0-9] not \\d, [A-Za-z] not \\w. Fix it, then re-run."
+      die "CT_EGRESS_PATTERNS in $cfg uses a non-portable regex construct (a \\d/\\w/\\s/\\b shorthand or \\N backref, a \\<\\> word boundary, a POSIX class [[:…:]], or lookaround/(?…)). The installer compiles the pattern as a POSIX ERE (grep -E) as a syntax check; these constructs behave differently in grep -E vs JavaScript (the engine the guards run), so they're rejected to keep the input in the subset where both agree. Use the portable subset — e.g. [0-9] not \\d, [A-Za-z] not \\w. Fix it, then re-run."
     fi
     # Defense-in-depth: must still actually COMPILE as a POSIX ERE (catch unbalanced
     # parens etc.). grep -E exits 2 on a bad pattern; capture it (set -e safe).
@@ -676,11 +678,10 @@ compile_org_sidecar() {
   fi
 
   # sourceHash lets BOTH guards warn when the config drifts post-install. Hash the RAW
-  # config FILE BYTES — the byte domain command-guard re-hashes via bun AND leak-guard
-  # re-hashes on the bun-less floor (NOT the shell-expanded value). Computed with a
-  # PORTABLE sha256, never bun, so a bun-less web-only install still publishes a usable
-  # hash for leak-guard's staleness check. sha256 hex is implementation-independent, so
-  # this equals command-guard's bun createHash over the same bytes.
+  # config FILE BYTES — the byte domain both guards re-hash via bun's createHash (NOT the
+  # shell-expanded value). Computed here with a PORTABLE sha256 (the installer is bash, so
+  # it never shells out to bun for this); sha256 hex is implementation-independent, so this
+  # equals the guards' bun createHash over the same bytes.
   local hash=""
   hash="$(sha256_file "$cfg" 2>/dev/null || true)"
 
@@ -772,16 +773,16 @@ apply_additions() {
   # required runtime aborts cleanly with no partial apply (in interactive mode the
   # profile dir isn't created until the build mkdir below; --apply pre-creates an
   # empty dir at apply_entry, which is benign — no settings/payload/rc are written).
-  # command-guard is a default-on SECURITY hook whose runtime is bun; shipping it
-  # silently disabled is not an option, so a missing bun ABORTS rather than soft-
-  # skips. The statusline and rtk-safe are .ts hooks that also cannot run without bun
+  # command-guard and leak-guard are default-on SECURITY hooks whose runtime is bun;
+  # shipping one silently disabled is not an option, so a missing bun ABORTS rather than
+  # soft-skips. The statusline and rtk-safe are .ts hooks that also cannot run without bun
   # (they can't degrade like the old bash versions), so bun is required when ANY of the
-  # three is selected — a selection with none still installs. ensure_dep offers to install
+  # four is selected — a selection with none still installs. ensure_dep offers to install
   # bun first (interactive); it die()s only on decline / non-interactive-absent, so a
   # partial apply is impossible.
-  if is_selected command-guard "$_sel_ids" || is_selected statusline "$_sel_ids" \
-     || is_selected rtk-safe "$_sel_ids"; then
-    ensure_dep bun "bun — required runtime for command-guard, statusline, and/or rtk-safe" 1
+  if is_selected command-guard "$_sel_ids" || is_selected leak-guard "$_sel_ids" \
+     || is_selected statusline "$_sel_ids" || is_selected rtk-safe "$_sel_ids"; then
+    ensure_dep bun "bun — required runtime for command-guard, leak-guard, statusline, and/or rtk-safe" 1
   fi
 
   # ── build ──
@@ -807,13 +808,18 @@ apply_additions() {
   fi
 
   if is_selected leak-guard "$_sel_ids"; then
-    place_file "$CONFIG_SRC/hooks/leak-guard.sh" "$config_dir/hooks" +x
+    # bun is guaranteed present here — the hard-dependency gate above aborts the install
+    # if leak-guard is selected without bun (the .ts can't degrade-run like the old .sh).
+    local bun_bin; bun_bin="$(command -v bun)"
+    place_file "$CONFIG_SRC/hooks/leak-guard.ts" "$config_dir/hooks" +x
     # Registered on WEB-egress tools only — Bash egress is command-guard's surface now
     # (one PreToolUse process per tool surface; no double-spawn on Bash). Includes the
     # SearXNG MCP tools so secure-deep-research's sensitive-topic path (which routes
     # through self-hosted SearXNG for privacy) is egress-scanned too; harmless no-op when
-    # no SearXNG server is configured. leak-guard.sh's tool-name gate admits the same set.
-    add="$(jq --arg cmd "$cqd/hooks/leak-guard.sh" \
+    # no SearXNG server is configured. leak-guard.ts's tool-name gate admits the same set.
+    # Register with bun's ABSOLUTE path (same two-token quoted shape as command-guard/
+    # statusline/rtk-safe): both tokens shq()-quoted so spaces/metachars/quotes don't split.
+    add="$(jq --arg cmd "$(shq "$bun_bin") $cqd/hooks/leak-guard.ts" \
       '.hooks.PreToolUse += [{matcher:"WebSearch|WebFetch|mcp__searxng__",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Optional: stronger secret detection. Degrades to regex tiers without it.
     ensure_dep trufflehog "trufflehog (leak-guard secret detection)" 0 || true
@@ -1270,7 +1276,7 @@ EOF
     d="${d%/}"
     managed=false
     if [ -f "$d/.aka-claude-tools-meta" ]; then managed=true
-    elif [ -f "$d/settings.json" ] && grep -qE 'command-guard\.ts|leak-guard\.sh' "$d/settings.json" 2>/dev/null; then managed=true; fi
+    elif [ -f "$d/settings.json" ] && grep -qE 'command-guard\.ts|leak-guard\.(ts|sh)' "$d/settings.json" 2>/dev/null; then managed=true; fi
     prof_json="$(jq -c --arg d "$d" --argjson m "$managed" '. + [{dir:$d,managed:$m}]' <<<"$prof_json")"
   done
 

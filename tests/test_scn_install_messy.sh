@@ -131,9 +131,9 @@ assert_ok "user allowedHttpHookUrls key preserved" \
   bash -c "jq -e '.allowedHttpHookUrls | index(\"https://hooks.example.com/notify\") != null' '$S' >/dev/null"
 
 # ── kit hook still landed + registered (the install actually layered) ──────────
-assert_file "kit hook placed: leak-guard.sh" "$P/hooks/leak-guard.sh"
+assert_file "kit hook placed: leak-guard.ts" "$P/hooks/leak-guard.ts"
 assert_ok   "leak-guard registered in settings.PreToolUse" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$S' >/dev/null"
 
 # ── no maintainer-only \$comment leak ─────────────────────────────────────────
 assert_ok "no \$comment keys in layered settings" \

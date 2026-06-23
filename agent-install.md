@@ -66,7 +66,7 @@ don't specify one:
   UPGRADE — but say so and offer the alternative; never silently default to
   upgrade-in-place.** A profile is aka-managed if it carries a
   `.aka-claude-tools-meta` file or its `settings.json` registers kit hooks (e.g. a
-  `command` ending in `/hooks/command-guard.ts` or `/hooks/leak-guard.sh`). When you
+  `command` ending in `/hooks/command-guard.ts` or `/hooks/leak-guard.ts`). When you
   detect one, tell the user plainly — e.g. "`~/.claude-aka` already exists (an older
   aka-claude-tools version); I can **upgrade it in place**, or set up a **new isolated
   profile** in a different folder with its own alias" — and let them pick. Upgrading

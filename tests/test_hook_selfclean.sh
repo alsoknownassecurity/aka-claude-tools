@@ -37,7 +37,7 @@ assert_ok "unmarked user hook registration kept" \
   bash -c "jq -e --arg m '$P/hooks/my-hook.sh' '[.hooks.PreToolUse[]?.hooks[].command] | index(\$m) != null' '$P/settings.json' >/dev/null"
 
 # A marked hook the kit STILL ships is kept.
-assert_file "currently-shipped marked hook kept" "$P/hooks/leak-guard.sh"
+assert_file "currently-shipped marked hook kept" "$P/hooks/leak-guard.ts"
 assert_lit "self-clean reported the removal" "managed-marker" "$SB/log"
 
 t_summary

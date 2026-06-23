@@ -32,12 +32,12 @@ assert_eq   "--apply exits 0 on a fresh dir" "0" "$?"
 
 S="$DIR/settings.json"
 assert_ok   "settings.json is valid JSON" jq -e . "$S"
-assert_file "leak-guard.sh placed"  "$DIR/hooks/leak-guard.sh"
+assert_file "leak-guard.ts placed"  "$DIR/hooks/leak-guard.ts"
 assert_file "wrap-up.md placed"    "$DIR/commands/wrap-up.md"
 assert_file "shell-audit skill placed" "$DIR/skills/shell-audit"
 assert_file "statusline.ts placed" "$DIR/hooks/statusline.ts"
 assert_ok   "leak-guard registered ONCE (web tools only; Bash is command-guard's)" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|map(select(endswith(\"/leak-guard.sh\")))|length==1' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|map(select(endswith(\"/leak-guard.ts\")))|length==1' '$S' >/dev/null"
 assert_ok   "kit denies present (secure-settings landed)" \
   bash -c "jq -e '((.permissions.deny // [])|length) > 0' '$S' >/dev/null"
 assert_ok   "statusLine wired" \

@@ -27,7 +27,7 @@ S="$DIR/settings.json"
 assert_ok "settings.json valid JSON" jq -e . "$S"
 # Basename matching still works despite the embedded quotes.
 assert_ok "leak-guard registration still matches by suffix" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|any(endswith(\"/hooks/leak-guard.sh\"))' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|any(endswith(\"/hooks/leak-guard.ts\"))' '$S' >/dev/null"
 # The stored command shell-quotes the dir (so the space is safe).
 assert_ok "command shell-quotes the config dir" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|any(startswith(\"'\''\"))' '$S' >/dev/null"

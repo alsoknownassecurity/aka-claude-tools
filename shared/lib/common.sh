@@ -524,7 +524,19 @@ legacy_prune_regs() {
 # by test_scn_upgrade_matcher_migration.sh (every entry must be subsumed by the live
 # additions.json matcher for its hook). Format: JSON array of {hook (basename), matcher
 # (the superseded string)}.
-AKA_SUPERSEDED_MATCHERS='[{"hook":"leak-guard.sh","matcher":"WebSearch|WebFetch"}]'
+#
+# CURRENTLY EMPTY. The one historical entry was leak-guard's SearXNG matcher broadening
+# ("WebSearch|WebFetch" → "WebSearch|WebFetch|mcp__searxng__"). That entry keyed on the OLD
+# FILE NAME leak-guard.sh; once leak-guard was ported to leak-guard.ts the file ALSO changed,
+# so a pre-port profile's stale "WebSearch|WebFetch" reg now points at leak-guard.sh — a file
+# the kit no longer ships. The marker-based self-clean (install.sh 4d-pre2) removes that file
+# AND prunes its registration by basename (matcher-AGNOSTIC), so ANY old leak-guard.sh reg
+# (any matcher) is cleaned and the merge re-adds the single current-matcher leak-guard.ts reg.
+# The file-rename path therefore SUBSUMES the matcher-broadening case here, and a leak-guard.sh
+# entry would now FAIL the SUBSET INVARIANT (no live additions.json hook ends in leak-guard.sh).
+# The build_superseded_add machinery below remains for a FUTURE matcher-only broadening (a hook
+# whose FILE NAME is unchanged across the broadening); add an entry then.
+AKA_SUPERSEDED_MATCHERS='[]'
 
 # build_superseded_add <add-json> → a SYNTHETIC add (JSON on stdout, or {} if none apply)
 # Maps the kit's real registrations (<add-json> — exactly what is registered THIS run) onto

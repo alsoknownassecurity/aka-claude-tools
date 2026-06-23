@@ -96,7 +96,7 @@ assert_grep "newer-kit addition content intact (not corrupted)" "$NEW_SENTINEL" 
 # its own set rather than no-op'ing).
 assert_ok "all current-kit deny rules present after downgrade" \
   bash -c "jq -e --slurpfile b '$BASE' '(\$b[0].permissions.deny - .permissions.deny) | length == 0' '$S' >/dev/null"
-assert_file "current-kit hook still present after downgrade" "$PROFILE/hooks/leak-guard.sh"
+assert_file "current-kit hook still present after downgrade" "$PROFILE/hooks/leak-guard.ts"
 
 # ── 8. Idempotent: a second downgrade run changes nothing ────────────────────
 cp "$S" "$SB/after1.json"

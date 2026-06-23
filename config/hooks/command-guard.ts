@@ -2,7 +2,7 @@
 // aka-claude-tools:managed-hook — installer-owned; auto-removed on upgrade if renamed/retired. Safe to delete.
 /**
  * command-guard.ts — PreToolUse hook for the Bash tool. The SOLE Bash egress guard
- * (bun is a hard dependency of this addition; see install.sh). leak-guard.sh is now
+ * (bun is a hard dependency of this addition; see install.sh). leak-guard.ts is now
  * WEB-only — all Bash egress checking lives here. It blocks:
  *   - DENY: piping output into a shell (curl … | bash) — structural.
  *   - DENY: writing to a shell STARTUP file (~/.zshrc, ~/.bashrc, …) via a Bash

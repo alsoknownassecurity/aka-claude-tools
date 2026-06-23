@@ -12,18 +12,18 @@ run() { CT_ADDITIONS="$1" SHELL=/bin/bash HOME="$SB" bash "$REPO_ROOT/install.sh
 
 # Install leak-guard + wrap-up.
 run "leak-guard wrap-up"
-assert_file "leak-guard hook deployed"      "$PROFILE/hooks/leak-guard.sh"
+assert_file "leak-guard hook deployed"      "$PROFILE/hooks/leak-guard.ts"
 assert_file "wrap-up command deployed"     "$PROFILE/commands/wrap-up.md"
 assert_ok   "leak-guard registered in settings" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$PROFILE/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$PROFILE/settings.json' >/dev/null"
 
 # Re-run WITHOUT leak-guard → it must be uninstalled, wrap-up retained.
 run "wrap-up"
 assert_eq "re-run (deselect) exits 0" "0" "$?"
-[ -e "$PROFILE/hooks/leak-guard.sh" ] && fail "leak-guard hook file removed on deselect" "still present" \
+[ -e "$PROFILE/hooks/leak-guard.ts" ] && fail "leak-guard hook file removed on deselect" "still present" \
                                      || pass "leak-guard hook file removed on deselect"
 assert_ok   "leak-guard registration pruned from settings" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\")) | not' '$PROFILE/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\")) | not' '$PROFILE/settings.json' >/dev/null"
 assert_file "still-selected wrap-up retained" "$PROFILE/commands/wrap-up.md"
 assert_ok   "settings.json still valid JSON after uninstall" jq -e . "$PROFILE/settings.json"
 

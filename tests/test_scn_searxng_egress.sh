@@ -18,11 +18,16 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "test_scn_searxng_egress:"
 
-LG="$REPO_ROOT/config/hooks/leak-guard.sh"
+LG="$REPO_ROOT/config/hooks/leak-guard.ts"
 SSECRET="ghp_0123456789abcdefghijklmnopqrstuv1234"   # matches the gh[pousr]_ CRED pattern
 SB="$(sandbox)"
 
-emit() { printf '%s' "$1" > "$SB/in.json"; bash "$LG" < "$SB/in.json" >/dev/null 2>&1; echo $?; }
+# leak-guard.ts runs under bun (a hard dependency); skip cleanly if bun is absent.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "  note: bun absent — leak-guard requires bun; skipping (SUITE NOT EXERCISED)."
+  exit 0
+fi
+emit() { printf '%s' "$1" > "$SB/in.json"; bun "$LG" < "$SB/in.json" >/dev/null 2>&1; echo $?; }
 
 # A. SearXNG search with a secret in .query
 rc="$(emit "$(jq -nc --arg k "$SSECRET" '{tool_name:"mcp__searxng__searxng_web_search",tool_input:{query:$k}}')")"
@@ -47,7 +52,7 @@ rc="$(emit "$(jq -nc --arg k "$SSECRET" '{tool_name:"Read",tool_input:{file_path
 assert_eq "non-web tool (Read) still IGNORED (exit 0)" "0" "$rc"
 
 # E. The registered MATCHER regex actually fires on the real SearXNG tool names.
-#    (The behavioral cases above run leak-guard.sh directly; this bridges to Claude
+#    (The behavioral cases above run leak-guard.ts directly; this bridges to Claude
 #    Code's matcher semantics — the matcher is a regex tested against the tool name —
 #    so a registration/matcher-string bug can't pass silently.) Source of truth: the
 #    matcher in config/additions.json.

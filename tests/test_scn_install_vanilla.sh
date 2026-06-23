@@ -76,9 +76,9 @@ assert_grep "CLAUDE.md content intact"            'my own global memory' "$PROFI
 assert_ok   "kit denies adopted (permissions unioned in)" \
   bash -c "jq -e '((.permissions.deny // []) | length) > 0' '$S' >/dev/null"
 # The kit hook (leak-guard) was placed and registered in settings.
-assert_file "kit hook placed: leak-guard.sh" "$PROFILE/hooks/leak-guard.sh"
+assert_file "kit hook placed: leak-guard.ts" "$PROFILE/hooks/leak-guard.ts"
 assert_ok   "leak-guard registered in settings.PreToolUse" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$S' >/dev/null"
 assert_ok   "statusLine wired in settings" \
   bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"
 

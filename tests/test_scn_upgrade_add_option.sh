@@ -40,7 +40,7 @@ JSON
 # ── (1) clean install of the base subset ─────────────────────────────────────
 run "$BASE_SEL"; rc1=$?
 assert_eq   "clean base install exits 0" "0" "$rc1"
-assert_file "base hook deployed: leak-guard.sh"     "$PROFILE/hooks/leak-guard.sh"
+assert_file "base hook deployed: leak-guard.ts"     "$PROFILE/hooks/leak-guard.ts"
 assert_file "base command deployed: wrap-up.md"    "$PROFILE/commands/wrap-up.md"
 assert_file "base skill deployed: shell-audit"     "$PROFILE/skills/shell-audit"
 assert_file "base statusline hook deployed"        "$PROFILE/hooks/statusline.ts"
@@ -56,12 +56,12 @@ assert_ok   "settings.json valid JSON after base install" jq -e . "$PROFILE/sett
 
 # Snapshot pre-upgrade state of the previously-selected additions + settings.
 S="$PROFILE/settings.json"
-WG_SUM_BEFORE="$(cksum < "$PROFILE/hooks/leak-guard.sh")"
+WG_SUM_BEFORE="$(cksum < "$PROFILE/hooks/leak-guard.ts")"
 WU_SUM_BEFORE="$(cksum < "$PROFILE/commands/wrap-up.md")"
 SL_SUM_BEFORE="$(cksum < "$PROFILE/hooks/statusline.ts")"
 cp "$S" "$SB/settings.before.json"
-# leak-guard registration count (it registers under TWO matchers by design).
-WG_REGS_BEFORE=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.sh"))] | length' "$S")
+# leak-guard registration count (one reg, under the web-egress matcher).
+WG_REGS_BEFORE=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.ts"))] | length' "$S")
 
 # ── (2) UPGRADE: re-run with the same base PLUS two previously-unselected ids ─
 ADD_SEL="$BASE_SEL secure-deep-research harness-pointer"
@@ -87,17 +87,17 @@ n_uniq=$(jq '.hooks.PreToolUse | unique_by(tojson) | length' "$S")
 assert_eq   "no duplicate PreToolUse registrations after upgrade" "$n_tot" "$n_uniq"
 
 # (c) previously-selected additions UNTOUCHED — files byte-identical, regs intact.
-assert_file "prev leak-guard hook still present"  "$PROFILE/hooks/leak-guard.sh"
+assert_file "prev leak-guard hook still present"  "$PROFILE/hooks/leak-guard.ts"
 assert_file "prev wrap-up command still present" "$PROFILE/commands/wrap-up.md"
 assert_file "prev shell-audit skill still present" "$PROFILE/skills/shell-audit"
 assert_file "prev statusline hook still present"  "$PROFILE/hooks/statusline.ts"
-assert_eq   "prev leak-guard hook content unchanged"  "$WG_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/leak-guard.sh")"
+assert_eq   "prev leak-guard hook content unchanged"  "$WG_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/leak-guard.ts")"
 assert_eq   "prev wrap-up command content unchanged" "$WU_SUM_BEFORE" "$(cksum < "$PROFILE/commands/wrap-up.md")"
 assert_eq   "prev statusline hook content unchanged" "$SL_SUM_BEFORE" "$(cksum < "$PROFILE/hooks/statusline.ts")"
 
 assert_ok   "prev leak-guard registration retained" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.sh\"))' '$S' >/dev/null"
-WG_REGS_AFTER=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.sh"))] | length' "$S")
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(.[]; endswith(\"/leak-guard.ts\"))' '$S' >/dev/null"
+WG_REGS_AFTER=$(jq '[.hooks.PreToolUse[]?.hooks[].command | select(endswith("/leak-guard.ts"))] | length' "$S")
 assert_eq   "prev leak-guard registration count unchanged" "$WG_REGS_BEFORE" "$WG_REGS_AFTER"
 assert_ok   "statusLine still wired after upgrade" \
   bash -c "jq -e '(.statusLine.command // \"\") | endswith(\"/statusline.ts\")' '$S' >/dev/null"

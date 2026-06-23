@@ -94,7 +94,7 @@ run_b() { CT_ADDITIONS="$SEL" SHELL=/bin/bash HOME="$SB_B" \
 
 run_b; assert_eq "PART B: baseline install exits 0" "0" "$?"
 SB="$PB/settings.json"
-HOOK="$PB/hooks/leak-guard.sh"
+HOOK="$PB/hooks/leak-guard.ts"
 assert_file "PART B: kit hook present after baseline" "$HOOK"
 
 # Half-written prior install: the hook FILE is gone but its registration remains
@@ -103,24 +103,24 @@ rm -f "$HOOK"
 assert_fail "PART B: kit hook file removed (setup)" bash -c "[ -e '$HOOK' ]"
 assert_ok "PART B: settings still valid JSON before re-run" jq -e . "$SB"
 assert_ok "PART B: leak-guard registration still present (orphaned reg)" \
-  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(endswith(\"/leak-guard.sh\"))' '$SB' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command] | any(endswith(\"/leak-guard.ts\"))' '$SB' >/dev/null"
 
 # Re-run: this is the upgrade/repair path — the missing hook must come back.
 run_b; rc_b=$?
 assert_eq "PART B: re-run over half-written profile exits 0" "0" "$rc_b"
 assert_file "PART B: missing kit hook REDEPLOYED" "$HOOK"
-if diff -q "$REPO_ROOT/config/hooks/leak-guard.sh" "$HOOK" >/dev/null 2>&1; then
+if diff -q "$REPO_ROOT/config/hooks/leak-guard.ts" "$HOOK" >/dev/null 2>&1; then
   pass "PART B: redeployed hook is byte-identical to the kit version"
 else
   fail "PART B: redeployed hook is byte-identical to the kit version" \
-    "profile copy differs from config/hooks/leak-guard.sh"
+    "profile copy differs from config/hooks/leak-guard.ts"
 fi
 assert_ok "PART B: settings.json still valid JSON after re-run" jq -e . "$SB"
 
 # Idempotent registration: leak-guard registered under EXACTLY the kit's canonical
 # matcher (WebSearch|WebFetch = 1; web-only, Bash is command-guard's), no duplicate
 # stray reg from the orphaned one we left behind.
-n_wg=$(jq '[.hooks.PreToolUse[] | select(.hooks[].command | endswith("/leak-guard.sh"))] | length' "$SB")
+n_wg=$(jq '[.hooks.PreToolUse[] | select(.hooks[].command | endswith("/leak-guard.ts"))] | length' "$SB")
 assert_eq "PART B: leak-guard registered under exactly the kit's 1 matcher (idempotent)" "1" "$n_wg"
 n_tot=$(jq '.hooks.PreToolUse | length' "$SB")
 n_uniq=$(jq '.hooks.PreToolUse | unique_by(tojson) | length' "$SB")

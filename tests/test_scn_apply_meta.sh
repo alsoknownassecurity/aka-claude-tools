@@ -2,7 +2,7 @@
 # Scenario — --apply STAMPS the .aka-claude-tools-meta managed marker.
 #
 # agent-install Step 1 detects a kit-managed profile by EITHER a .aka-claude-tools-meta
-# file OR a recognizable kit hook (command-guard.ts / leak-guard.sh) in settings.json.
+# file OR a recognizable kit hook (command-guard.ts / leak-guard.ts) in settings.json.
 # Before this, the marker was written only by --alias, so a MINIMAL selection installed
 # via --apply (e.g. secure-settings + statusline — no recognizable hooks) produced a
 # profile that carried NEITHER signal and was undetectable as kit-managed. --apply now

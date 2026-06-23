@@ -15,7 +15,7 @@ inst() { # $1 = CT_ADDITIONS value, into a fresh sandbox; echoes the profile dir
 # Exact subset: only what was named, nothing else.
 P="$(inst "wrap-up")"
 assert_file "subset: wrap-up deployed"          "$P/commands/wrap-up.md"
-[ -e "$P/hooks/leak-guard.sh" ] && fail "subset installs ONLY the named ids" "leak-guard leaked in" \
+[ -e "$P/hooks/leak-guard.ts" ] && fail "subset installs ONLY the named ids" "leak-guard leaked in" \
                                || pass "subset installs ONLY the named ids"
 
 # A non-recommended addition installs when explicitly named, with its config template.

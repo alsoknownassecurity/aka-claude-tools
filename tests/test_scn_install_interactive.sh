@@ -111,7 +111,7 @@ assert_file "p1 accepted addition deployed: wrap-up command" "$P1/commands/wrap-
 assert_ok   "p1 secure-settings honored: deny array non-empty" \
   bash -c "jq -e '((.permissions.deny // []) | length) > 0' '$P1/settings.json' >/dev/null"
 # REJECTED additions → their artifacts must be ABSENT (reject is honored).
-[ -e "$P1/hooks/leak-guard.sh" ] && fail "p1 rejected leak-guard not deployed" "leak-guard.sh present" \
+[ -e "$P1/hooks/leak-guard.ts" ] && fail "p1 rejected leak-guard not deployed" "leak-guard.ts present" \
                                || pass "p1 rejected leak-guard not deployed"
 [ -e "$P1/hooks/statusline.ts" ] && fail "p1 rejected statusline not deployed" "statusline.ts present" \
                                 || pass "p1 rejected statusline not deployed"
@@ -125,7 +125,7 @@ assert_ok   "p1 no statusLine in settings (rejected)" \
 assert_file "loop created profile 2 dir" "$P2"
 assert_ok   "profile 2 settings.json valid JSON" jq -e . "$P2/settings.json"
 assert_file "p2 selection honored: wrap-up command" "$P2/commands/wrap-up.md"
-[ -e "$P2/hooks/leak-guard.sh" ] && fail "p2 rejected leak-guard not deployed" "leak-guard.sh present" \
+[ -e "$P2/hooks/leak-guard.ts" ] && fail "p2 rejected leak-guard not deployed" "leak-guard.ts present" \
                                || pass "p2 rejected leak-guard not deployed"
 # The two profiles are INDEPENDENT directories, not the same dir reused.
 assert_ok   "profiles 1 and 2 are distinct dirs" bash -c "[ '$P1' != '$P2' ] && [ -d '$P1' ] && [ -d '$P2' ]"

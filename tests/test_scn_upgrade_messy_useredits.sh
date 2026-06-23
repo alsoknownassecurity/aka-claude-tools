@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upgrade over a MESSY, hand-edited profile (T19) — the real-world upgrade where a
 # user has been living in their profile and has:
-#   (a) hand-edited a MANAGED kit file (changed leak-guard.sh's body),
+#   (a) hand-edited a MANAGED kit file (changed leak-guard.ts's body),
 #   (b) added their OWN permission rules (a deny + an allow the kit never ships),
 #   (c) added their OWN hook (an unmarked hook file + its settings registration),
 #   (d) TWEAKED a kit hook's registration (changed leak-guard's matcher).
@@ -18,16 +18,22 @@ echo "test_scn_upgrade_messy_useredits:"
 
 SB="$(sandbox)"; touch "$SB/.bashrc"; P="$SB/.claude-aka"
 
-# Deterministic recommended subset that needs no optional runtime (bun/rtk/
-# trufflehog): leak-guard ships a marked kit hook + a registration we can tweak;
-# secure-settings ships kit denies we can union against the user's own.
+# leak-guard.ts runs under bun (a hard dependency); the suite already requires bun, but
+# skip cleanly if it is somehow absent rather than asserting against an aborted install.
+if ! command -v bun >/dev/null 2>&1; then
+  pass "skipped (bun absent — leak-guard.ts upgrade path needs bun)"
+  t_summary; exit 0
+fi
+
+# Recommended subset: leak-guard ships a marked kit hook (leak-guard.ts) + a registration
+# we can tweak; secure-settings ships kit denies we can union against the user's own.
 SEL="secure-settings leak-guard"
 run() { CT_ADDITIONS="$SEL" SHELL=/bin/bash HOME="$SB" \
         bash "$REPO_ROOT/install.sh" "$@" --defaults --no-auth-inherit >"$SB/log" 2>&1; }
 
 # ── (1) clean baseline install ────────────────────────────────────────────────
 run; assert_eq "baseline install exits 0" "0" "$?"
-assert_file "kit hook present after baseline" "$P/hooks/leak-guard.sh"
+assert_file "kit hook present after baseline" "$P/hooks/leak-guard.ts"
 S="$P/settings.json"
 
 # A representative kit deny the baseline shipped (used later to prove kit rules
@@ -42,9 +48,9 @@ assert_ok "baseline adopted a kit deny" \
 #     own file with user damage, which a re-run must overwrite with the kit version
 #     (place_file re-places every kit hook on each run).
 HAND_EDIT_SENTINEL="### USER HAND EDIT — should be reverted by upgrade"
-printf '%s\n' "$HAND_EDIT_SENTINEL" >> "$P/hooks/leak-guard.sh"
+printf '%s\n' "$HAND_EDIT_SENTINEL" >> "$P/hooks/leak-guard.ts"
 assert_lit "managed marker still on the edited kit file" \
-  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.sh"
+  "aka-claude-tools:managed-hook" "$P/hooks/leak-guard.ts"
 
 # (b) user's OWN permission rules (a deny + an allow the kit NEVER ships, and not
 #     in managed-permissions retired) — reconciliation must leave both untouched.
@@ -58,7 +64,7 @@ chmod +x "$U_HOOK"
 
 # (d) TWEAK the kit leak-guard registration: change its matcher to a custom one.
 #     A user who edited their settings.json to scope the guard differently.
-WG="$P/hooks/leak-guard.sh"
+WG="$P/hooks/leak-guard.ts"
 TWEAKED_MATCHER="WebFetch"   # not the kit's "WebSearch|WebFetch" / "Bash"
 jq --arg wg "$WG" --arg uh "$U_HOOK" \
    --arg ud "$U_DENY" --arg ua "$U_ALLOW" --arg tm "$TWEAKED_MATCHER" '
@@ -85,14 +91,14 @@ assert_eq "no rebuild backup (layered in place)" "0" "$n_bak"
 # ── (4) ASSERTIONS ────────────────────────────────────────────────────────────
 
 # (a) the MANAGED kit file is RESTORED to the kit version — user's body edit gone.
-assert_file "managed kit file present after upgrade" "$P/hooks/leak-guard.sh"
+assert_file "managed kit file present after upgrade" "$P/hooks/leak-guard.ts"
 assert_nlit "user's hand-edit to the managed kit file was reverted" \
-  "$HAND_EDIT_SENTINEL" "$P/hooks/leak-guard.sh"
+  "$HAND_EDIT_SENTINEL" "$P/hooks/leak-guard.ts"
 # It matches the shipped kit file byte-for-byte (true "restored to kit version").
-if diff -q "$REPO_ROOT/config/hooks/leak-guard.sh" "$P/hooks/leak-guard.sh" >/dev/null 2>&1; then
+if diff -q "$REPO_ROOT/config/hooks/leak-guard.ts" "$P/hooks/leak-guard.ts" >/dev/null 2>&1; then
   pass "managed kit file is byte-identical to the kit version"
 else
-  fail "managed kit file is byte-identical to the kit version" "profile copy differs from config/hooks/leak-guard.sh"
+  fail "managed kit file is byte-identical to the kit version" "profile copy differs from config/hooks/leak-guard.ts"
 fi
 
 # (b) the user's OWN permission rules survive (UNION, never dropped).
@@ -117,7 +123,7 @@ assert_ok "user's own hook registration kept" \
 assert_ok "kit canonical leak-guard registration re-added (web-egress matcher, NOT Bash)" \
   bash -c "jq -e '
      [ .hooks.PreToolUse[]
-       | select((.hooks // [] | map(.command) | any(endswith(\"/leak-guard.sh\"))))
+       | select((.hooks // [] | map(.command) | any(endswith(\"/leak-guard.ts\"))))
        | .matcher ] as \$m
      | (\$m | index(\"WebSearch|WebFetch|mcp__searxng__\") != null) and (\$m | index(\"Bash\") == null)
    ' '$S' >/dev/null"
@@ -140,6 +146,6 @@ assert_eq "no duplicate PreToolUse registrations after upgrade" "$n_tot" "$n_uni
 # defect — so we do NOT assert "exactly 2". The real invariant: the kit's canonical
 # registration is present (above) and the user's own edit is preserved (union).
 assert_ok "user's tweaked leak-guard matcher preserved through the upgrade (union, by design)" \
-  bash -c "jq -e '[.hooks.PreToolUse[] | select(.hooks[].command | endswith(\"/leak-guard.sh\")) | .matcher] | index(\"WebFetch\") != null' '$S' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[] | select(.hooks[].command | endswith(\"/leak-guard.ts\")) | .matcher] | index(\"WebFetch\") != null' '$S' >/dev/null"
 
 t_summary

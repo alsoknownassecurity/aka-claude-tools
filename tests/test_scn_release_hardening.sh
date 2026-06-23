@@ -65,7 +65,7 @@ assert_ngrep "H2: NO legacy leak-guard registration survives" \
 assert_ngrep "H2: NO legacy command-guard registration survives" \
   "command-guard.ts" "$P/settings.json"
 assert_ok   "H2: new leak-guard registered" \
-  bash -c "jq -e '[.hooks.PreToolUse[].hooks[].command] | any(endswith(\"/leak-guard.sh\"))' '$P/settings.json' >/dev/null"
+  bash -c "jq -e '[.hooks.PreToolUse[].hooks[].command] | any(endswith(\"/leak-guard.ts\"))' '$P/settings.json' >/dev/null"
 assert_ok   "H2: legacy hook FILES removed" \
   bash -c "[ ! -e '$P/hooks/leak-guard.sh' ] && [ ! -e '$P/hooks/command-guard.ts' ]"
 assert_ok   "H2: a backup of the legacy hooks was taken first" \
