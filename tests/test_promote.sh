@@ -24,9 +24,11 @@ assert_grep "promoted content matches the edit" "$MARK" "$repoA/config/skills/sh
 _staged=$(git -C "$repoA" diff --cached --name-only | wc -l | tr -d ' ')
 [ "$_staged" -gt 0 ] && pass "promote staged file(s) ($_staged)" || fail "promote staged file(s)" "nothing staged"
 
-# ── Scenario B: a planted personal trace is REFUSED (never staged) ───────────
+# ── Scenario B: a planted leak-shaped trace is REFUSED (never staged) ────────
+# Use a synthetic RFC1918 private IP — it matches the LEAK_INFRA pattern (so the
+# guard must refuse it) while revealing nothing about any real person or host.
 repoB="$(make_repo)" ; profB="$(make_profile)"
-printf '\ncontact someone@example.ts.net\n' >> "$profB/skills/shell-audit/SKILL.md"
+printf '\ninternal host 10.0.0.42\n' >> "$profB/skills/shell-audit/SKILL.md"
 
 assert_fail "promote refuses a planted leak" \
   "$PROMOTE" --repo "$repoB" --profile "$profB" --branch test/leak shell-audit

@@ -48,7 +48,7 @@ seed_existing_login() {
   },
   "hasCompletedOnboarding": true,
   "lastOnboardingVersion": "1.0.99",
-  "deepLinkTerminal": "ghostty",
+  "deepLinkTerminal": "example-terminal",
   "numStartups": 4217,
   "userID": "user-secret-id-should-not-travel",
   "projects": {
@@ -90,7 +90,7 @@ assert_file "A: new profile .claude.json was seeded" "$JA"
 [ -f "$JA" ] && assert_ok "A: lastOnboardingVersion inherited" \
   bash -c "jq -e '.lastOnboardingVersion == \"1.0.99\"' '$JA' >/dev/null"
 [ -f "$JA" ] && assert_ok "A: deepLinkTerminal inherited" \
-  bash -c "jq -e '.deepLinkTerminal == \"ghostty\"' '$JA' >/dev/null"
+  bash -c "jq -e '.deepLinkTerminal == \"example-terminal\"' '$JA' >/dev/null"
 
 # Secrets / PII / cruft beyond the onboarding-avoidance set must NOT travel.
 [ -f "$JA" ] && assert_ok "A: history NOT copied" \
