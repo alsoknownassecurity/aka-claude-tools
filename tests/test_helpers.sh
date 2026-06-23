@@ -39,20 +39,39 @@ SONLY='{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","com
 PONLY="$(printf %s "$SONLY" | src prune_hook_regs leak-guard.sh)"
 assert_ok "pruning the last hook removes the empty event" jqe "$PONLY" '(.hooks // {}) == {}'
 
-# ── prune_statusline: drop the kit statusLine (EITHER extension), keep an unrelated one ──
-# The matcher strips the .sh/.ts from its argument to a stem and tests both, so the SAME
-# call prunes a current .ts registration AND a residual .sh one left on a pre-port profile.
-PL="$(printf %s '{"statusLine":{"command":"/p/hooks/statusline.ts"}}' | src prune_statusline statusline.ts)"
-assert_ok "statusLine removed when .ts basename matches" jqe "$PL" 'has("statusLine") | not'
-# The manifest now passes .../statusline.ts, but a pre-port profile still carries a .sh
-# command — the stem-based matcher must prune it too (the upgrade-then-deselect path).
-PLSH="$(printf %s '{"statusLine":{"command":"/p/hooks/statusline.sh"}}' | src prune_statusline statusline.ts)"
-assert_ok "residual .sh statusLine pruned by the .ts-stem matcher" jqe "$PLSH" 'has("statusLine") | not'
-# A bun-prefixed command (the real kit shape, two tokens) still END-anchors on the .ts.
-PLBUN="$(printf %s '{"statusLine":{"command":"/usr/bin/bun /p/hooks/statusline.ts"}}' | src prune_statusline statusline.ts)"
-assert_ok "bun-prefixed kit statusLine pruned (end-anchored on .ts)" jqe "$PLBUN" 'has("statusLine") | not'
-KEEP="$(printf %s '{"statusLine":{"command":"/my/own.sh"}}' | src prune_statusline statusline.ts)"
-assert_ok "unrelated statusLine kept (neither .sh nor .ts stem matches)" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
+# ── prune_statusline: drop the kit statusLine by its EXACT quoted registered tail (EITHER
+#    extension); keep everything else — a DIFFERENT dir with the same /hooks/statusline.ts
+#    tail (#65), and a user command that passes the path as DATA (#67 review). ──
+# Signature: prune_statusline <quoted-anchor-stem>, e.g. '/p'/hooks/statusline — the SAME
+# shq(config_dir) the registration used. The matcher end-anchors VERBATIM (no quote-strip),
+# so the surrounding quotes distinguish the kit's command from a data argument. mkc builds a
+# {statusLine.command} fixture from a literal command string (single quotes stay literal in
+# the double-quoted arg). STEM is config_dir=/p, so shq(/p)='/p'.
+mkc() { jq -nc --arg c "$1" '{statusLine:{command:$c}}'; }
+STEM="'/p'/hooks/statusline"
+# Current kit shape: shq(bun) + space + shq(/p) + /hooks/statusline.ts.
+PLBUN="$(mkc "'/usr/bin/bun' '/p'/hooks/statusline.ts" | src prune_statusline "$STEM")"
+assert_ok "kit statusLine pruned (quoted bun .ts tail)" jqe "$PLBUN" 'has("statusLine") | not'
+# A pre-port profile carries a quoted .sh command (no interpreter) in the SAME dir — the
+# either-extension stem must prune it too (the upgrade-then-deselect path).
+PLSH="$(mkc "'/p'/hooks/statusline.sh" | src prune_statusline "$STEM")"
+assert_ok "residual quoted .sh statusLine pruned (either-extension stem)" jqe "$PLSH" 'has("statusLine") | not'
+# A config dir WITH A SPACE registers a quoted dir token — the same-shape stem still matches.
+PLSP="$(mkc "'/usr/bin/bun' '/My Cfg/.c'/hooks/statusline.ts" | src prune_statusline "'/My Cfg/.c'/hooks/statusline")"
+assert_ok "kit statusLine in a space-containing dir pruned (#67)" jqe "$PLSP" 'has("statusLine") | not'
+# An unrelated statusLine in a wholly different path is kept.
+KEEP="$(mkc "/my/own.sh" | src prune_statusline "$STEM")"
+assert_ok "unrelated statusLine kept (no tail match)" jqe "$KEEP" '.statusLine.command == "/my/own.sh"'
+# #65: a user's OWN kit-style statusLine ending in /hooks/statusline.ts but in a DIFFERENT
+# config dir must NOT be treated as the kit's (the old bare-tail matcher wrongly pruned it).
+KEEP2="$(mkc "'/usr/bin/bun' '/opt/custom'/hooks/statusline.ts" | src prune_statusline "$STEM")"
+assert_ok "user statusLine in a DIFFERENT dir kept (quoted-tail anchor, #65)" jqe "$KEEP2" '.statusLine | has("command")'
+# #67-review (the critical cross-check finding): a user command that ends with the kit path
+# only as a QUOTED DATA argument (`echo '\''/p/hooks/statusline.ts'\''`) must NOT match — its
+# closing quote sits AFTER .ts, not before /hooks, so the verbatim tail differs. A quote-
+# stripping matcher would have conflated the two and deleted this user's statusLine.
+KEEP3="$(mkc "echo '/p/hooks/statusline.ts'" | src prune_statusline "$STEM")"
+assert_ok "user statusLine passing the path as DATA kept (quotes not stripped)" jqe "$KEEP3" '.statusLine | has("command")'
 
 # ── adversarial characterization — the merge/prune INVARIANTS that make the gnarly
 #    jq safe to modify: a future edit that breaks any of these fails HERE. Asserted

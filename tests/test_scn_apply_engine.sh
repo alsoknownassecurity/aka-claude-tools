@@ -82,6 +82,23 @@ CT_CONFIG_DIR="$DIR2" CT_ADDITIONS="secure-settings leak-guard" HOME="$SB2" \
 assert_ok   "re-run is idempotent (no settings drift)" \
   bash -c "diff <(jq -S . '$SB2/first.json') <(jq -S . '$S2') >/dev/null"
 
+# ── B2. config_dir canonicalization invariant (load-bearing for the statusline deselect
+#    anchor: install and deselect must normalize the dir IDENTICALLY, else the quoted
+#    full-path tail won't match). Install statusline with a TRAILING-SLASH CT_CONFIG_DIR,
+#    then deselect with NO trailing slash — the kit statusLine must still prune. A future
+#    refactor that normalizes the two paths differently fails HERE. (Needs bun, which the
+#    suite already preflights.) ──
+SB4="$(sandbox)"; DIR4="$SB4/.claude-aka"
+CT_CONFIG_DIR="$DIR4/" CT_ADDITIONS="statusline leak-guard" HOME="$SB4" \
+  bash "$INSTALL" --apply --no-auth-inherit >"$SB4/log" 2>&1
+S4="$DIR4/settings.json"
+assert_ok   "statusLine registered (install via trailing-slash dir)" \
+  bash -c "jq -e '.statusLine.command' '$S4' >/dev/null"
+CT_CONFIG_DIR="$DIR4" CT_ADDITIONS="leak-guard" HOME="$SB4" \
+  bash "$INSTALL" --apply --no-auth-inherit >"$SB4/log2" 2>&1
+assert_ok   "statusLine pruned on deselect despite install/deselect slash mismatch" \
+  bash -c "jq -e 'has(\"statusLine\") | not' '$S4' >/dev/null"
+
 # ── C. input guards ──────────────────────────────────────────────────────────
 SB3="$(sandbox)"; DIR3="$SB3/.claude-aka"
 assert_fail "--apply without CT_CONFIG_DIR fails" \

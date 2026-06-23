@@ -92,6 +92,14 @@ if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ] && [ "$CT_ENUMERATE" !=
   say "${C_DIM}Isolated Claude config folders + aliases, with the must-have additions.${C_RST}"
 fi
 
+# shq <string> → the value as ONE POSIX-shell-quoted token, with any embedded single
+# quote escaped as '\'' — so a path containing spaces, shell metachars, OR a literal
+# single quote (e.g. /Users/x/O'Neil/.claude) round-trips through a shell command line
+# unchanged. Used to build the hook `command` strings Claude Code re-parses through a
+# shell. Pure bash (no subshell); for a quote-free value it yields the same '<value>'
+# the installer wrote before, so existing registrations are byte-identical.
+shq() { local s=$1; s=${s//\'/\'\\\'\'}; printf "'%s'" "$s"; }
+
 # ── settings merge ───────────────────────────────────────────────────────────
 # merge_settings <existing.json|''> <additions.json-string>  -> merged JSON on stdout
 # Deep-merges (later wins) but UNIONS permission arrays and hook-event arrays so a
@@ -235,24 +243,44 @@ prune_hook_regs_resolving() {
       else . end'
 }
 
+# prune_statusline <quoted-anchor-stem>  (settings json on stdin → pruned on stdout)
 # Drop the kit's .statusLine on deselect — identified by its command END-ANCHORED on the
-# stem of $1 with EITHER extension. The kit's command tail is "/hooks/statusline.ts" today
-# (registered as "'<bun>' <cfg>/hooks/statusline.ts"); a profile created before the port
-# carries "/hooks/statusline.sh". A deselect must prune whichever is registered, so the .sh
-# extension is stripped from $1 to a stem and both "<stem>.sh" and "<stem>.ts" are tested.
+# kit's EXACT registered tail "<shq(config_dir)>/hooks/statusline" with EITHER extension
+# (the caller passes that stem). The kit registers "<shq(bun)> <shq(config_dir)>/hooks/
+# statusline.ts" today (and a pre-port profile "<shq(config_dir)>/hooks/statusline.sh"),
+# where shq(config_dir) is the SINGLE-QUOTED dir, e.g. '/Users/x/.claude-aka'. So the
+# stored command ends with the literal quoted tail '...'/hooks/statusline.{sh,ts}, and we
+# match that tail VERBATIM — no quote-stripping. The surrounding quotes are precisely what
+# makes the kit's registration distinguishable from a user command that merely passes the
+# path as DATA (e.g. `echo '/Users/x/.claude-aka/hooks/statusline.ts'`, whose tail is
+# ...statusline.ts' with the closing quote in a DIFFERENT place) — stripping quotes would
+# conflate the two and risk deleting that user's statusLine.
 # If a user's own prior statusLine was stashed when the addition was installed (see the
 # stash step in apply_additions), RESTORE it verbatim instead of leaving none — the
-# statusLine is a singleton object the merge overwrites, so stash+restore is the only way
-# to deselect 'statusline' without losing a value the user had before.
-# END-anchored (endswith), NOT a substring contains: a user command that merely MENTIONS
-# the path mid-string (`echo .../statusline.sh && mine`) or has a suffix
-# (`.../statusline.sh-wrapper`) is NOT the kit's and must not be touched. The matcher in
-# the stash guard (apply_additions) tests the SAME either-extension stem so stash and
-# restore can't disagree.
+# statusLine is a singleton the merge overwrites, so stash+restore is the only way to
+# deselect 'statusline' without losing a value the user had before.
+# END-anchored on the QUOTED FULL path (endswith): a user statusLine in a DIFFERENT
+# directory (/opt/custom/hooks/statusline.ts), the fully-quoted path-as-data forms above, a
+# mid-string mention, or a suffix (.../statusline.ts-wrapper) all FAIL the match and are left
+# untouched. Because shq() is deterministic and config_dir is canonicalized identically at
+# install and deselect (apply_entry / setup_one_config strip the trailing slash + absolutize),
+# the install-time and deselect-time tails are byte-identical — including a config dir that
+# contains a space OR an embedded single quote, which now round-trips cleanly. The stash
+# guard (apply_additions) builds the SAME manifest-derived quoted stem so stash and restore
+# can't disagree.
+# IRREDUCIBLE LIMITS (both safe, both documented rather than over-claimed):
+#  • A user command whose FINAL token is the path written in the kit's EXACT split-token
+#    quoting AND in the kit's EXACT config dir (e.g. `wrapper '<config_dir>'/hooks/statusline.ts`)
+#    is byte-indistinguishable from the kit's own registration tail and WILL match. This is a
+#    pathological hand-construction (no one quotes a data path that way, in that dir); it is the
+#    floor of any string-based ownership test, not a realistic user value.
+#  • If Claude Code ever re-serializes .statusLine.command into an ARRAY or a different quoting
+#    style, the join loses the literal quotes and the kit's OWN tail stops matching → a deselect
+#    leaves the kit statusLine in place. That is a non-destructive false NEGATIVE (a stale entry
+#    the user can remove), never a clobber. statusLine.command is a string in CC's schema today.
 prune_statusline() {
-  jq --arg b "$1" '
-    ($b | rtrimstr(".sh") | rtrimstr(".ts")) as $stem
-    | if (.statusLine|type)=="object"
+  jq --arg stem "$1" '
+    if (.statusLine|type)=="object"
        and ((.statusLine.command) as $c
             | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
             | (endswith($stem + ".sh") or endswith($stem + ".ts")))
@@ -303,21 +331,23 @@ addition_owned_paths() {
   done
 }
 
-# prune_addition_from_settings <id>  (settings json on stdin → pruned on stdout)
+# prune_addition_from_settings <id> <config_dir>  (settings json on stdin → pruned on stdout)
 # Applies the relevant prunes for one addition based on its additions.json entry.
 prune_addition_from_settings() {
-  local id="$1" s hook sline setf
+  local id="$1" config_dir="$2" s hook sline setf
   s="$(cat)"
   hook="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .hook // ""'       "$CONFIG_SRC/additions.json")"
   sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
-  # End-anchored on "/hooks/statusline.{sh,ts}" (the kit's command tail, either extension),
-  # not the bare basename, so a user statusLine named statusline.sh in some OTHER dir, or a
-  # suffixed path, is never matched as the kit's (consistent with the stash guard in
-  # apply_additions). $sline is the current manifest path (…/statusline.ts); prune_statusline
-  # strips the extension and tests both, so a residual .sh registration also prunes.
-  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "/$sline")"
+  # End-anchored on the kit's EXACT registered tail "<shq(config_dir)>/hooks/statusline"
+  # (either extension), built with the SAME shq() the registration used — so it matches the
+  # kit's own command verbatim while a user statusLine ending in /hooks/statusline.{sh,ts}
+  # in some OTHER dir, or one passing the path as data, is never matched (consistent with
+  # the stash guard in apply_additions). $sline is the current manifest path
+  # (…/statusline.ts); ${sline%.*} drops the extension to a stem and prune_statusline tests
+  # both .sh and .ts, so a residual pre-port .sh registration in THIS config dir also prunes.
+  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(shq "$config_dir")/${sline%.*}")"
   # The statusline addition can pin a weather location into .preferences.location at
   # install; prune_statusline only drops the statusLine command, so remove that pinned
   # preference too (it is the only thing the kit writes under .preferences).
@@ -759,11 +789,12 @@ apply_additions() {
   local add='{}'
   # Claude Code runs a hook's `command` through a shell, so a config dir containing
   # spaces or shell metachars would word-split / mis-parse the registered path.
-  # Single-quote the DIRECTORY portion (cqd) and leave the `/hooks/<file>` suffix
-  # outside the quotes — so the path is shell-safe AND its basename still matches
-  # the prune/registration checks (… endswith "/x.sh"). config_dir is already
-  # absolute + $HOME-expanded here, so single-quoting it is literal and correct.
-  local cqd="'$config_dir'"
+  # shq() quotes the DIRECTORY portion (cqd) — escaping even an embedded single quote
+  # — and the `/hooks/<file>` suffix stays outside the quotes, so the path is shell-safe
+  # AND its basename still matches the prune/registration checks (… endswith "/x.sh").
+  # config_dir is already absolute + $HOME-expanded here. For a quote-free dir shq yields
+  # the same '<dir>' the installer wrote before, so registrations stay byte-identical.
+  local cqd; cqd="$(shq "$config_dir")"
   is_selected secure-settings "$_sel_ids" && add="$(jq -s '.[0] * .[1]' <(printf '%s' "$add") "$CONFIG_SRC/settings.base.json")"
 
   # Shared library the egress guards read (single source of truth for the
@@ -799,8 +830,8 @@ apply_additions() {
     # Register with bun's ABSOLUTE path. Claude Code runs hooks in a shell that
     # may not have bun on PATH (non-interactive subshells); a bare shebang would
     # silently fail to launch and the guard would be a no-op. Both tokens are
-    # shell-quoted (bun path + the script's dir) so spaces/metachars don't split.
-    add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/command-guard.ts" \
+    # shq()-quoted (bun path + the script's dir) so spaces/metachars/quotes don't split.
+    add="$(jq --arg cmd "$(shq "$bun_bin") $cqd/hooks/command-guard.ts" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     ok "command-guard enabled (bun: $bun_bin)"
     # Optional: stronger Bash secret detection (command-guard runs trufflehog on
@@ -828,10 +859,10 @@ apply_additions() {
     local bun_bin; bun_bin="$(command -v bun)"
     place_file "$CONFIG_SRC/hooks/statusline.ts" "$config_dir/hooks" +x
     # Register with bun's ABSOLUTE path (same two-token quoted shape as command-guard):
-    # both tokens shell-quoted so spaces/metachars in the bun path or config dir don't
-    # split, and the command still ends with the literal "/hooks/statusline.ts" the
-    # prune/stash matchers anchor on.
-    add="$(jq --arg cmd "'$bun_bin' $cqd/hooks/statusline.ts" \
+    # both tokens shq()-quoted so spaces/metachars/quotes in the bun path or config dir
+    # don't split, and the command still ends with the literal "/hooks/statusline.ts"
+    # the prune/stash matchers anchor on (after quote-normalization).
+    add="$(jq --arg cmd "$(shq "$bun_bin") $cqd/hooks/statusline.ts" \
       '.statusLine = {type:"command",command:$cmd,refreshInterval:2}' <<<"$add")"
     # Optional location pin for accurate weather (default: auto-detect by IP).
     isay ""
@@ -948,7 +979,7 @@ apply_additions() {
       [ -n "$_p" ] && [ -e "$_p" ] && { rm -rf "$_p"; _changed=1; }
     done < <(addition_owned_paths "$_uid" "$config_dir")
     if [ "$existing" != "{}" ]; then
-      local _pruned; _pruned="$(printf '%s' "$existing" | prune_addition_from_settings "$_uid")"
+      local _pruned; _pruned="$(printf '%s' "$existing" | prune_addition_from_settings "$_uid" "$config_dir")"
       [ -n "$_pruned" ] && [ "$_pruned" != "$existing" ] && { existing="$_pruned"; _changed=1; }
     fi
     [ "$_changed" = "1" ] && ok "Uninstalled '${_uid}' — removed its files and settings entries"
@@ -959,18 +990,23 @@ apply_additions() {
   # plain install would silently lose a statusLine the user already had. Stash a NON-kit
   # prior value once — prune_statusline restores it verbatim if the addition is later
   # deselected. Idempotency guard: only stash when the current statusLine is the user's
-  # (command does NOT END with our /hooks/statusline.{sh,ts}) AND nothing is stashed yet,
-  # so a re-apply can never overwrite the saved original with the kit value. The
-  # either-extension endswith here MUST match prune_statusline's anchor exactly (so a kit
-  # .sh registration on a pre-port profile is recognised as the kit's, not stashed as the
-  # user's) — substring contains would mis-stash a user command that merely mentions the
-  # path mid-string or has a suffix.
+  # (command does NOT END with our quoted "<shq(config_dir)>/hooks/statusline.{sh,ts}" tail)
+  # AND nothing is stashed yet, so a re-apply can never overwrite the saved original with the
+  # kit value. The quoted full-path endswith here MUST match prune_statusline's anchor
+  # exactly (so a kit .sh registration on a pre-port profile in THIS dir is recognised as the
+  # kit's, not stashed as the user's; and a user statusLine ending in /hooks/statusline.{sh,
+  # ts} in a DIFFERENT dir — or passing the path as DATA — IS correctly seen as the user's
+  # and stashed). The stem is derived from the SAME manifest statusLine path that
+  # prune_addition_from_settings uses, so the manifest stays the single source of truth and
+  # stash and prune can't disagree even if that path is later moved.
+  local _slrel; _slrel="$(jq -r '.additions[] | select(.id=="statusline") | .statusLine // "hooks/statusline.ts"' "$CONFIG_SRC/additions.json")"
+  local _slstem; _slstem="$(shq "$config_dir")/${_slrel%.*}"
   if is_selected statusline "$_sel_ids" && [ "$existing" != "{}" ]; then
-    if printf '%s' "$existing" | jq -e '
+    if printf '%s' "$existing" | jq -e --arg stem "$_slstem" '
           (.statusLine|type)=="object"
           and ((.statusLine.command) as $c
                | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-               | (endswith("/hooks/statusline.sh") or endswith("/hooks/statusline.ts")) | not)
+               | (endswith($stem + ".sh") or endswith($stem + ".ts")) | not)
           and (has("_aka_prior_statusLine")|not)' >/dev/null 2>&1; then
       warn "Replacing your existing statusLine with the kit's — your previous one is saved and restored if you later deselect 'statusline'."
       existing="$(printf '%s' "$existing" | jq '._aka_prior_statusLine = .statusLine')"
