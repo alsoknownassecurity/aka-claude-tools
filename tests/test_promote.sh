@@ -26,7 +26,7 @@ _staged=$(git -C "$repoA" diff --cached --name-only | wc -l | tr -d ' ')
 
 # ── Scenario B: a planted personal trace is REFUSED (never staged) ───────────
 repoB="$(make_repo)" ; profB="$(make_profile)"
-printf '\ncontact will@akasecurity.io\n' >> "$profB/skills/shell-audit/SKILL.md"
+printf '\ncontact someone@example.ts.net\n' >> "$profB/skills/shell-audit/SKILL.md"
 
 assert_fail "promote refuses a planted leak" \
   "$PROMOTE" --repo "$repoB" --profile "$profB" --branch test/leak shell-audit
