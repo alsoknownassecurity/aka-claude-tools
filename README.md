@@ -1,168 +1,139 @@
 # aka-claude-tools
 
-<p align="center"><img src="media/banner.svg" alt="aka-claude-tools — the floor a fresh Claude Code should start from: clean context, locked doors, guarded exits. MIT · needs jq + bun · v0.2.0." width="100%"></p>
+<p align="center"><img src="media/banner.svg" alt="aka-claude-tools — clean context, locked doors, guarded exits for Claude Code. MIT · needs jq + bun." width="100%"></p>
 
-**The floor a fresh Claude Code should start from** — clean context, locked
-credentials, guarded egress. Installed into its own **isolated profile**, so your
-existing setup is never touched. Pick-and-choose, no lock-in.
+**Make Claude Code safer to use.** Clean context, locked-down credentials, guarded
+egress — the security defaults Claude Code doesn't ship with, layered onto a profile
+of its own in a few minutes.
+
+New to this? Hand the repo to Claude and it sets you up. Comfortable in a terminal?
+Read every hook first — it's all plain shell and TypeScript, MIT, and the guards scan
+locally: your code and secrets never leave your machine.
 
 From [alsoknownassecurity](https://github.com/alsoknownassecurity) · MIT · needs `jq` + `bun`.
 
 ---
 
-## Powerful out of the box. Bare out of the box.
+## What it guards against
 
-Claude Code is a capable coding agent on day one — and it ships with the guardrails of
-a blank text editor. `aka-claude-tools` adds **nine optional pieces** — six on by
-default, three you opt in — that give it clean context, locked doors, and guarded exits.
+A coding agent runs shell commands and reaches the network on your behalf. This kit
+adds the guardrails for the obvious foot-guns:
 
-Every piece is **independent**: take what you want, ignore the rest, delete any in
-seconds. No framework, nothing proprietary, nothing phones home.
+- **Reading your credentials** — SSH keys, cloud tokens, `.env` files, keychains → denied.
+- **`curl … | bash`** and friends — piping a web script straight into your shell → blocked.
+- **Editing your shell startup files** — a common way things quietly persist → blocked.
+- **Secrets leaving in a web request** → matched on your machine and blocked.
+- **Context filling with noise** — chatty command output → summarized before it reaches the model.
+
+Nine small pieces, six on by default and three opt-in. Each stands alone — take what you want.
 
 ## Quick start
 
-**Two ways in, same destination.**
+Two ways in, same result: a hardened profile launched by its own alias.
 
-**Path A — hand it to your AI (recommended; no manual clone).** In an existing,
-logged-in Claude Code session, point it at the repo:
+**Hand it to Claude** — in a logged-in Claude Code session, say:
 
 > Set up aka-claude-tools from github.com/alsoknownassecurity/aka-claude-tools —
-> read its agent-install.md and set up a new hardened profile for me.
+> read its agent-install.md and set up a hardened profile for me.
 
-It clones the repo, reads the guide, checks what you already have, migrates anything
-custom, and runs the installer — no commands to type, no manual clone. Spec:
-[`agent-install.md`](agent-install.md).
+It reads the guide, checks what you already have, migrates it cleanly, and runs the
+installer. Nothing to type.
 
-**Path B — clone it and run the installer yourself.**
+**Or run it yourself:**
 
 ```bash
 git clone git@github.com:alsoknownassecurity/aka-claude-tools.git
 cd aka-claude-tools
 ./install.sh             # interactive
-./install.sh --defaults  # take every default + the recommended six
-./install.sh --version   # print the kit version (v0.2.0)
+./install.sh --defaults  # accept the recommended six
 ```
 
-Nothing runs on clone — the kit is all there to read first. The installer asks where to
-put the profile (default `~/.claude-aka`), what to name the launcher (default `aka`), and
-which additions to enable.
+Nothing runs on clone — read the code first if you like. The installer asks where to put
+the profile, what to name the launcher, and which pieces to enable, and migrates your
+current config in (paths rewritten) — so the new profile is a working copy of your setup,
+not a bare sandbox. Prefer a walkthrough? See the [safe-setup carousel](media/decks/safe-setup.pdf).
 
-**Launch it** — `aka` opens a Claude Code with its own settings, hooks, and history.
-Your normal `claude` is completely untouched.
+## See it actually block something
 
-**Then verify the controls actually fire** — a guardrail you haven't watched fire is one
-you're only assuming works:
+A guard you haven't watched fire is one you're only assuming works. Launch the profile
+(`aka`) and try:
 
-- Ask it to read `~/.ssh/id_rsa` → it should **refuse**.
-- Check the status bar → context + rate-limit gauges should show.
-- Try `curl … | bash` → command-guard should **block** it.
+- ask it to read `~/.ssh/id_rsa` → it **refuses**
+- check the status bar → context and rate-limit gauges show
+- run `curl … | bash` → **blocked**
 
 <p align="center">
-  <img src="media/control-ssh-refused.svg" alt="secure-settings refusing to read ~/.ssh/id_rsa — Read(~/.ssh/**) is in permissions.deny" width="100%"><br>
-  <img src="media/control-statusline.svg" alt="statusline showing live context fill and rate-limit gauges" width="100%"><br>
+  <img src="media/control-ssh-refused.svg" alt="secure-settings refusing to read ~/.ssh/id_rsa" width="100%"><br>
+  <img src="media/control-statusline.svg" alt="status line showing live context fill and rate-limit gauges" width="100%"><br>
   <img src="media/control-curl-bash-blocked.svg" alt="command-guard blocking curl piped into bash" width="100%">
 </p>
 
-Prefer a step-by-step walkthrough? See the **[safe-setup carousel](media/decks/safe-setup.pdf)** (PDF).
-
 ## What's inside
 
-<p align="center"><img src="media/whats-inside.svg" alt="Nine additions in five groups. On by default: rtk-safe, statusline, secure-settings, leak-guard, command-guard, shell-audit. Opt-in: /wrap-up, secure-deep-research, harness-pointer." width="100%"></p>
+<p align="center"><img src="media/whats-inside.svg" alt="Nine additions: six on by default, three opt-in." width="100%"></p>
 
-Nine additions, grouped by what they do. **●** on by default · **○** opt-in. Prefer a
-visual tour? See the **[what's-inside carousel](media/decks/whats-inside.pdf)** (PDF).
-
-**Clean context** — keep the model's working memory for the work.
-- **● rtk-safe** — rewrites chatty commands (giant listings, logs) into compact summaries
-  *before* they reach the model — **cut ~75% of routed command-output tokens** in a 90-day
-  production sample. Inert until you install [`rtk`](https://github.com/rtk-ai/rtk).
-- **● statusline** — a status bar showing context fill and rate-limit budget live, so you
-  know when to wrap a session.
-
-**Locked doors** — safe defaults a fresh install should already have.
-- **● secure-settings** — the agent can't read your SSH keys, cloud credentials, `.env`
-  files, or keychains; can't write your shell startup files; telemetry off; untrusted
-  plugins don't auto-load.
-
-**Guarded exits** — watch what leaves, and what runs.
-- **● leak-guard** — inspects what the agent sends to the web (searches, fetches) and
-  blocks anything shaped like a secret. Scanned locally; nothing is uploaded to check it.
-- **● command-guard** — watches shell commands: blocks piping a web script straight into
-  your shell, edits to your startup files, and credentials being shipped out.
-
-**Verify & hand off** — check the work before it ships.
-- **● shell-audit** — on-demand, read-only scan of your shell setup; flags hardcoded
-  credentials, sketchy startup hooks, and risky aliases in your dotfiles.
-- **○ /wrap-up** — a clean end-of-session routine: summarizes, verifies, and stages a
-  commit for you to review — never commits on its own.
-
-**Optional extras** — off until you want them.
-- **○ secure-deep-research** — privacy-aware web research that routes through your own
-  search instance and gates sensitive topics.
-- **○ harness-pointer** — a small nudge pointing the agent at the right CLI for your
-  environment. Ships disabled and empty.
-
-| On by default | Opt in |
-|---|---|
-| secure-settings · leak-guard · command-guard · rtk-safe · statusline · shell-audit | /wrap-up · secure-deep-research · harness-pointer |
-
-The full manifest — what each piece places, its settings — is
+Nine additions; the menu is driven entirely by
 [`config/additions.json`](config/additions.json), the single source both install paths read.
+Prefer a visual tour? See the [what's-inside carousel](media/decks/whats-inside.pdf).
 
-## Why a kit, not a framework
+| Addition | What it does | Default |
+|---|---|---|
+| `secure-settings` | Denies reads of SSH keys, cloud creds, `.env`, keychains; blocks writes to shell startup files; telemetry off; no auto-loaded MCP servers. | ● on |
+| `leak-guard` | Scans what the agent sends to the web and blocks anything shaped like a secret — locally; nothing is uploaded to check it. | ● on |
+| `command-guard` | Blocks `curl…\|bash`, edits to your shell startup files, and credentials being shipped out. | ● on |
+| `rtk-safe` | Rewrites chatty command output into compact summaries before it reaches the model (~75% fewer routed tokens in a 90-day sample). Inert until [`rtk`](https://github.com/rtk-ai/rtk) is installed. | ● on |
+| `statusline` | A status bar with live context-fill and rate-limit gauges. | ● on |
+| `shell-audit` | On-demand, read-only scan of your shell startup for hardcoded creds, risky hooks, and stale aliases. | ● on |
+| `wrap-up` | A `/wrap-up` command that summarizes, verifies, and stages a commit for review — never commits on its own. | ○ opt-in |
+| `secure-deep-research` | Privacy-aware web research that routes through your own search instance and gates sensitive topics. | ○ opt-in |
+| `harness-pointer` | A small nudge pointing the agent at the right CLI for your environment. Ships empty. | ○ opt-in |
 
-This isn't a platform you adopt. It's the **floor** — clean context, locked credentials,
-guarded egress — that a coding agent ought to start from.
+## Profiles
 
-<p align="center"><img src="media/isolated-profile.svg" alt="Isolated profile: the aka launcher points CLAUDE_CONFIG_DIR at ~/.claude-aka — a hardened profile with its own settings, hooks, history and the guards on — while your real ~/.claude stays untouched." width="100%"></p>
+A profile is its own `CLAUDE_CONFIG_DIR` — its own settings, hooks, and history, launched
+by an alias. Run several side by side: `claude` your everyday basics, `aka` fully hardened,
+`work` work-only tools, `play` planning experiments. One Claude Code binary; the alias just
+points at the right folder.
 
-- **Isolated.** Each profile is its own `CLAUDE_CONFIG_DIR` folder with its own settings,
-  hooks, and history, launched by alias. Your real `~/.claude` is never touched unless you
-  point at it explicitly.
-- **Independent.** Every addition stands alone — break one, the rest are fine. Re-run the
-  installer to add, remove, or change what's enabled; deselecting uninstalls cleanly.
-- **Reversible.** Don't like it? Delete the profile — your real setup never changed.
+- **Pick per profile.** Choose pieces from the menu, or set `CT_ADDITIONS` to the ids you want for a scripted run.
+- **Upgrade in place.** As the kit updates, re-run — it detects which profiles are kit-managed and **layers the current additions in place**, reconciling retired rules and re-registering renamed hooks; your own settings are left intact.
+- **Remove cleanly.** Drop one piece by re-running without it (deselecting uninstalls it). Don't like any of it? Delete the profile — your real setup never changed.
 
-## Requirements
+<p align="center"><img src="media/isolated-profile.svg" alt="A config dir is a whole Claude Code in a folder: try the kit in a fresh ~/.claude-aka or harden your real ~/.claude, and run several profiles side by side, each its own launcher." width="100%"></p>
 
-`jq` and `bun` (the guards and status line run on bun). Optional:
-[`trufflehog`](https://github.com/trufflesecurity/trufflehog) for stronger secret
-detection, [`rtk`](https://github.com/rtk-ai/rtk) for the rewrite addition. The installer
-checks each and offers to install it (with consent) via your package manager. macOS or Linux.
+## What stays on your machine
 
-## Managing a profile
+The guards run **locally** — secrets are matched on your machine, nothing is uploaded to
+check them, and the kit sends no telemetry. (The optional status line fetches weather and
+your usage; deselect it to opt out.)
 
-- **Login** — the installer inherits your existing Claude Code login, so the new profile
-  doesn't re-onboard. Use `--no-auth-inherit` when the profile is for a *different* account.
-- **Upgrade** — `git pull`, then re-run against your profile (e.g. `aka`'s `~/.claude-aka`).
-  It layers in place: your own settings are preserved, the kit's own rules reconciled.
-  Easiest via Path A.
-- **Uninstall** — `./uninstall.sh` discovers your profiles and lets you pick one (or name
-  it: `./uninstall.sh ~/.claude-aka`). Removes the profile folder and its alias block;
-  your default `~/.claude` is never touched. To drop a single addition instead, re-run the
-  installer without it.
-
-## Details
-
-Deeper mechanics live in linked docs rather than here:
-
-- **Full lifecycle** — install, upgrade, migrating a rich existing config, the `--apply` /
-  `--alias` engine modes, non-interactive `CT_ADDITIONS` / `CT_CONFIG_DIR`: [`agent-install.md`](agent-install.md).
-- **Org-specific config** — block your internal hostnames/IPs/paths from web egress, or
-  steer the agent off a banned CLI: [`shared/aka-claude-tools.config.example`](shared/aka-claude-tools.config.example).
-- **Shared secret patterns** the guards match: [`config/hooks/lib/secret-patterns.json`](config/hooks/lib/secret-patterns.json).
-
-## Security
-
-The egress guards are **defense-in-depth, not a sandbox** — they raise the cost of an
-accidental leak, they don't make exfiltration impossible. The content scan covers the
-common outbound tools (`curl`/`wget`/web search & fetch); channels like `ssh`/`git push`/a
-language runtime's own request, or a `$VAR`-referenced (non-literal) secret, are not
-scanned. Treat them as the seatbelt; the brakes are `permissions.deny` on credential paths,
+They're **defense-in-depth, not a sandbox**: they raise the cost of a mistake, they don't
+make exfiltration impossible. They don't see `ssh` / `git push`, a runtime's own requests,
+or a `$VAR`-referenced (non-literal) secret. The real boundary is the credential deny-list,
 no auto-loaded MCP servers, and not running with `bypassPermissions`. The guards **fail
 closed** if their pattern file is missing or corrupt.
 
 Found a security issue? Please report it privately — see [`SECURITY.md`](SECURITY.md).
+
+## Installing via your agent?
+
+If you're a coding agent reading this to set up a profile, don't improvise — follow
+[`agent-install.md`](agent-install.md). It's the deterministic spec: enumerate existing
+profiles with `./install.sh --enumerate`, migrate cleanly, then drive `./install.sh --apply`
+and `./install.sh --alias` (install.sh is the only sanctioned shell-rc writer). Use
+`--no-auth-inherit` when the profile is for a different account.
+
+## Beyond Claude Code
+
+This is the Claude Code kit. A Codex counterpart — and an agent **harness** that drives a
+disciplined, probe-gated engineering loop inside a profile — are in the works.
+
+## Requirements
+
+`jq` and `bun` (the guards and status line run on bun). Optional:
+[`trufflehog`](https://github.com/trufflesecurity/trufflehog) for stronger secret detection,
+[`rtk`](https://github.com/rtk-ai/rtk) for the rewrite addition. The installer checks each
+and offers to install it (with your consent) via your package manager. macOS or Linux.
 
 ## Acknowledgments
 
