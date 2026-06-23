@@ -51,11 +51,16 @@
 #                      managed block, or exits non-zero on an unresolved name
 #                      collision (the caller picks another name). Requires CT_CONFIG_DIR
 #                      + CT_ALIAS; implies non-interactive.
+#   --version, -V      Print the kit version (from the VERSION file) and exit. Runs
+#                      before any dependency check, so it works on a bare checkout.
 
 set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_SRC="$REPO_DIR/config"
+# Single source of truth for the kit version — also git-tagged and recorded in
+# CHANGELOG.md. Missing file degrades to "unknown" rather than failing.
+KIT_VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || printf 'unknown')"
 # History of permission rules the kit has retired — drives upgrade reconciliation
 # (see reconcile_managed_perms). Missing file degrades to "nothing retired".
 RETIRED_PERMS="$(cat "$CONFIG_SRC/managed-permissions.json" 2>/dev/null || printf '{}')"
@@ -68,6 +73,7 @@ CT_ALIAS_MODE=0
 CT_ENUMERATE=0
 for arg in "$@"; do
   case "$arg" in
+    --version|-V)      printf 'aka-claude-tools %s\n' "$KIT_VERSION"; exit 0 ;;
     --defaults)        export CT_NONINTERACTIVE=1 ;;
     --no-auth-inherit) SEED_AUTH=0 ;;
     --apply)           CT_APPLY=1; export CT_NONINTERACTIVE=1 ;;
