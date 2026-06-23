@@ -17,3 +17,12 @@ AKIAIOSFODNN7EXAMPLE
 ghp_0123456789abcdefghij0123456789ABCD
 sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaa
 xoxb-1234567890-abcdefghij
+# shell-audit self-test fixtures (tests/test_scn_shell_audit.sh) — distinct fake
+# values from the egress corpus above; all obvious placeholders, never real.
+AKIAABCDEFGHIJKLMNOP
+sk-ant-abcdefghij0123456789xy
+sk-ant-abcdefSECRETpath0123456
+ghp_abcdefghij0123456789ABCD
+xoxb-0123456789-abcdefABCDEFxy
+# searxng-egress credential-shape fixture (tests/test_scn_searxng_egress.sh)
+ghp_0123456789abcdefghijklmnopqrstuv1234
