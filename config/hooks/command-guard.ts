@@ -157,7 +157,24 @@ function tokenize(cmd: string, depth = 0): Tok[] {
   const n = cmd.length;
   while (i < n) {
     const c = cmd[i];
-    if (c === ' ' || c === '\t' || c === '\n') { flush(); i++; continue; }
+    if (c === ' ' || c === '\t') { flush(); i++; continue; }
+    // A newline can begin a new command on the next line — emit a dedicated '\n'
+    // command-separator token so command-position tracking (the case-keyword recognition
+    // in caseAlternationPipes) survives across lines, e.g. `ext=foo\ncase "$ext" in …`.
+    // Emit ONLY after a bare WORD: that is the sole place a following line starts a fresh
+    // command at command position. After an OPERATOR we never emit — a list separator
+    // (; & && || | |&) has already marked the next command position, while a pipe or a
+    // redirection op EXPECTS its target/continuation on the next line, and inserting a
+    // token there would sever `… | bash` or `> ~/.zshrc` across the newline and fail OPEN
+    // on the sole Bash guard (the regression a cross-vendor review caught). This keeps the
+    // pipe and startup-write scans byte-for-byte as they were pre-change. (Backslash-
+    // newline is handled by the escape rule above; a quoted newline is data in its span.)
+    if (c === '\n') {
+      flush();
+      const last = toks[toks.length - 1];
+      if (last && !last.op) toks.push({ v: '\n', op: true });
+      i++; continue;
+    }
     // a '#' at a WORD BOUNDARY (not mid-word like a#b, not inside quotes) starts a shell
     // comment → skip to end of line. Prevents FPs where a comment merely MENTIONS a pipe
     // or redirect (`echo hi # see ~/.zshrc`). Operators BEFORE the '#' are already tokenized.
@@ -250,10 +267,83 @@ function pipeFeedsShellInterpreter(toks: Tok[], j: number): boolean {
   return false;
 }
 
+// ── case-statement awareness (FP fix, issue #75) ──────────────────────────────
+// In a `case … in <pat>)` construct the `|` between patterns is a pattern-OR
+// SEPARATOR, not a pipe — so `case "$ext" in py|sh|bash|zsh)` does NOT pipe into a
+// shell, even though `sh|bash` looks like one. We do ONE structural pass to find every
+// `|` that sits inside a case pattern list, so detectPipeToShell can skip exactly those.
+//
+// SAFETY — this must NEVER cause an under-block of a real pipe-to-shell. In real bash,
+// between `in` (or an arm terminator `;;`/`;&`/`;;&`) and the `)` that closes a pattern
+// list, a `|` is ALWAYS alternation — bash never runs a pipe there (a would-be pipe like
+// `case x in foo|bash` is a syntax error without the `)`). So as long as our "pattern"
+// state corresponds to bash's, skipping those `|` is safe. The one way to diverge is to
+// treat `case`/`in` as keywords when bash sees them as ordinary WORDS (arguments) — e.g.
+// `echo case in foo | bash`, where `| bash` is a genuine pipe. We therefore recognize
+// `case` ONLY at command position (start of input, or right after a command separator /
+// newline) — exactly where bash treats it as the keyword. We also recognize bash's
+// optional leading `(` on a pattern (`case x in (a|b) …`). esac / an early-popped case
+// only ever REDUCES pattern context, which is the over-block (safe) direction.
+// Reserved words after which (at command position) another COMMAND begins — so a
+// `case` directly following one of them is still the keyword. `{` `(` introduce a group;
+// `!`/`time` prefix a pipeline; the rest are compound-command introducers.
+const CMD_INTRODUCERS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!', 'time']);
+function caseAlternationPipes(toks: Tok[]): Set<number> {
+  const marks = new Set<number>();
+  // Each open `case` is a frame: 'awaitIn' (seen `case`, want `in`) → 'pattern' (inside a
+  // pattern list, `|` is alternation) → 'body' (arm commands; `|` is a real pipe again).
+  const stack: { state: 'awaitIn' | 'pattern' | 'body' }[] = [];
+  let atCmdPos = true;   // start of input is a command position
+  let prevSemi = false;  // previous token was a single ';' (for `;;`/`;&` arm detection)
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    const top = stack.length ? stack[stack.length - 1] : null;
+    if (t.op) {
+      if (t.v === '(') {
+        // A `(` right inside a pattern list is bash's optional pattern-group opener
+        // (`case x in (a|b) …`), matched by the arm-closing `)` — NOT a subshell, so it
+        // does not change pattern state. Elsewhere it opens a subshell/group.
+        atCmdPos = true; prevSemi = false;
+      } else if (t.v === ')') {
+        if (top && top.state === 'pattern') top.state = 'body';  // closes the pattern list
+        atCmdPos = false; prevSemi = false;
+      } else if (t.v === '|') {
+        if (top && top.state === 'pattern') marks.add(i);        // alternation, not a pipe
+        atCmdPos = true; prevSemi = false;
+      } else if (t.v === ';') {
+        if (top && top.state === 'body' && prevSemi) top.state = 'pattern';  // `;;`
+        atCmdPos = true; prevSemi = true;
+      } else if (t.v === '&') {
+        if (top && top.state === 'body' && prevSemi) top.state = 'pattern';  // `;&` / `;;&`
+        atCmdPos = true; prevSemi = false;
+      } else if (t.v === '||' || t.v === '&&' || t.v === '|&' || t.v === '\n') {
+        atCmdPos = true; prevSemi = false;
+      } else {
+        atCmdPos = false; prevSemi = false;  // redirections etc.
+      }
+    } else {
+      const w = t.v;
+      const wasCmdPos = atCmdPos;
+      if (w === 'case' && wasCmdPos) stack.push({ state: 'awaitIn' });
+      else if (w === 'in' && top && top.state === 'awaitIn') top.state = 'pattern';
+      else if (w === 'esac' && top) stack.pop();
+      // A command-introducing reserved word (do/then/else/{/… at command position)
+      // is followed by another COMMAND, so the next word is still at command position —
+      // this is what lets `do case …` / `then case …` recognize the keyword. Any other
+      // word consumes the command position.
+      atCmdPos = wasCmdPos && CMD_INTRODUCERS.has(w);
+      prevSemi = false;
+    }
+  }
+  return marks;
+}
+
 // pipe-to-shell: a real `|`/`|&` operator whose command resolves to a shell interpreter.
+// A `|` that is a case pattern-list alternation (not a pipe) is skipped — see above.
 function detectPipeToShell(toks: Tok[]): boolean {
+  const alt = caseAlternationPipes(toks);
   for (let i = 0; i < toks.length - 1; i++) {
-    if (toks[i].op && (toks[i].v === '|' || toks[i].v === '|&') && pipeFeedsShellInterpreter(toks, i + 1)) return true;
+    if (toks[i].op && (toks[i].v === '|' || toks[i].v === '|&') && !alt.has(i) && pipeFeedsShellInterpreter(toks, i + 1)) return true;
   }
   return false;
 }
@@ -271,7 +361,7 @@ function detectStartupWrite(toks: Tok[]): boolean {
   let cur: Tok[] = [];
   const cmds: Tok[][] = [];
   for (const t of toks) {
-    if (t.op && (t.v === '|' || t.v === '||' || t.v === '&&' || t.v === ';' || t.v === '&')) { if (cur.length) cmds.push(cur); cur = []; }
+    if (t.op && (t.v === '|' || t.v === '||' || t.v === '&&' || t.v === ';' || t.v === '&' || t.v === '\n')) { if (cur.length) cmds.push(cur); cur = []; }
     else cur.push(t);
   }
   if (cur.length) cmds.push(cur);
