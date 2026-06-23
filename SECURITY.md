@@ -7,7 +7,7 @@ suspected vulnerability.
 
 - Preferred: open a private vulnerability report via GitHub Security Advisories
   ("Report a vulnerability" on the repository's **Security** tab).
-- Or email **will@akasecurity.io**.
+- Or email **security@akasecurity.io**.
 
 Please include what the issue is, how to reproduce it, and the impact you see. We
 aim to acknowledge reports within a few business days.

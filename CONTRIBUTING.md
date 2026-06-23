@@ -49,7 +49,7 @@ to a user.
 - **Bugs / features:** open an issue using the templates.
 - **Security vulnerabilities:** do **not** open a public issue — follow
   [`SECURITY.md`](SECURITY.md) (private GitHub advisory, or email
-  will@akasecurity.io).
+  security@akasecurity.io).
 
 ## License
 
