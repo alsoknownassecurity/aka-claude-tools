@@ -200,6 +200,42 @@ detect_shell_rc() {
   esac
 }
 
+# ── rc-write input guards (the SOLE sanctioned writer must fail closed) ───────
+# assert_safe_alias_name NAME / assert_safe_config_dir DIR — die before any rc write if
+# the value can't be safely embedded in the launcher block
+#   alias NAME='CLAUDE_CONFIG_DIR="DIR" claude'
+# An unsanitized value can break out of that quoting and inject code at rc-source or
+# alias-expansion time: NAME sits unquoted before '=' (must be an identifier-safe token,
+# no leading '-' or it parses as `alias` flags); DIR sits inside "…" inside '…' (a single
+# quote breaks the outer '…', a double quote breaks the inner "DIR", a control char splits
+# the line). Spaces are fine. Kit-created paths / chosen aliases never legitimately carry
+# such characters, so REJECT rather than attempt escaping (which _alias_resolve_target
+# would also have to reverse). Every setup_alias write path gates through these.
+# The name charset also excludes '.' because the collision/enumerate paths
+# (alias_target_elsewhere, enumerate_entry) interpolate the name into a grep ERE where '.'
+# would be a wildcard — over-matching a sibling alias and driving a wrong dedupe/removal
+# decision. Dropping it leaves no ERE metacharacter in an accepted name ('-' is ERE-literal).
+assert_safe_alias_name() {
+  local LC_ALL=C   # pin ASCII semantics: the [A-Za-z0-9] range is locale-collation-sensitive
+  case "$1" in
+    ''|-*|*[!A-Za-z0-9_-]*)
+      die "Refusing to write an unsafe alias name to your shell rc — use letters, digits, '_', '-' (not leading '-') only: $1" ;;
+  esac
+}
+assert_safe_config_dir() {
+  local LC_ALL=C   # byte-wise: ASCII control bytes caught, UTF-8 path bytes (0x80+) accepted
+  # The dir is reparsed inside "…" when the alias is INVOKED, so rc-source quoting is not
+  # enough — `$` and backtick trigger command/parameter substitution at expansion time
+  # (proven), and a trailing `\` can escape the closing quote. Reject those plus the quote
+  # breakouts and line-splitting control chars. Spaces / ordinary punctuation / UTF-8 are
+  # inert inside "…" once these are gone, so they stay allowed. The installer $HOME-expands
+  # the path well before here, so a legitimate dir never carries a literal $, `, \, or quote.
+  case "$1" in
+    *"'"*|*'"'*|*'$'*|*'`'*|*'\'*|*[[:cntrl:]]*)
+      die "Refusing to write an alias for an unsafe config dir (contains a quote, \$, \`, \\, or control character): $1" ;;
+  esac
+}
+
 # ── idempotent managed-block writer ──────────────────────────────────────────
 # write_managed_block FILE ID CONTENT
 # Inserts/replaces a block delimited by markers keyed on ID. Re-running with the

@@ -8,6 +8,21 @@ Pre-1.0: minor versions may carry breaking changes; they are called out below.
 
 ## [Unreleased]
 
+### Security
+- `setup_alias` now rejects an alias name or config dir that can't be safely embedded
+  in the launcher's shell-rc block instead of writing it verbatim. A name with a shell
+  metacharacter (or leading `-`), or a dir containing a quote, `$`, backtick, backslash,
+  or control character, could previously break out of the
+  `alias NAME='CLAUDE_CONFIG_DIR="DIR" claude'` quoting and inject code — at rc-source
+  time (quote breakout) or, because the `"DIR"` is reparsed inside live double quotes
+  when the alias is invoked, at alias-expansion time (`$()` / backtick / `${}`).
+  Kit-created paths never contain such characters (the installer `$HOME`-expands the
+  path first), so it fails closed with a clear message rather than escaping. Both write
+  paths — fresh install and the collision-rename prompt — gate through the same checks;
+  the interactive path also validates the dir before writing any profile files. The
+  accepted alias-name charset also excludes `.` so an accepted name carries no regex
+  metacharacter when the collision/enumerate paths grep for it.
+
 ## [0.2.0] — public-ready prep
 
 First public-ready release: the kit is scrubbed of internal traces, the docs are

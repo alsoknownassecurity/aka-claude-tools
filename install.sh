@@ -513,6 +513,9 @@ seed_auth() {
 #   • strict      → report and return 1 so the caller (the agent) picks another.
 setup_alias() {
   local config_dir="$1" alias_name="$2" policy="${3:-interactive}"
+  # Fail closed BEFORE touching the rc (assert_safe_* live in common.sh).
+  assert_safe_alias_name "$alias_name"
+  assert_safe_config_dir "$config_dir"
   local rc; rc="$(detect_shell_rc)"
   local prior; prior="$(alias_target_elsewhere "$alias_name" "$rc")"
   if [ "$prior" = "$config_dir" ]; then
@@ -540,6 +543,7 @@ setup_alias() {
     local newalias=""
     prompt newalias "  Use a different alias (blank = skip the alias entirely):" "${alias_name}2"
     if [ -n "$newalias" ]; then
+      assert_safe_alias_name "$newalias"   # the prompted name is user input → re-gate it
       write_managed_block "$rc" "$newalias" \
 "alias ${newalias}='CLAUDE_CONFIG_DIR=\"${config_dir}\" claude'"
       meta_set "$config_dir" alias "$newalias"
@@ -575,6 +579,9 @@ setup_one_config() {
   # + hook command strings bind to a stable location, not the cwd. Leave "/" alone.
   [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
   case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
+  # Reject an unsafe dir HERE, before any profile files are written — setup_alias (step 5)
+  # re-checks, but failing early avoids leaving a populated profile dir with no alias.
+  assert_safe_config_dir "$config_dir"
   # The default ~/.claude needs no alias (plain `claude` launches it).
   local is_default=0
   [ "$config_dir" = "$HOME/.claude" ] && is_default=1
