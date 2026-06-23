@@ -74,11 +74,4 @@ assert_grep "README describes deselect/re-run to remove an addition" \
 assert_grep "README upgrade section mentions layer-in-place default" \
   "layer-in-place|layer.*in place" "$README"
 
-# ── 7. hook-rename pre-port path is documented for upgraders ─────────
-# hook-rename.sh is a required one-time step for profiles created before
-# the hook rename; the installer does NOT invoke it automatically, so an upgrader
-# must be told to run it. A doc that omits it strands old profiles.
-assert_lit "README/agent-install mention hook-rename pre-port step" \
-  "hook-rename" "$README"
-
 t_summary

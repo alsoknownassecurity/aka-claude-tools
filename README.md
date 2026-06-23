@@ -93,10 +93,6 @@ Non-interactive (CI / scripted): `./install.sh --defaults` takes every default
 [`config/additions.json`](config/additions.json)) to install an **exact set**
 (unknown id aborts; empty installs none), and `CT_CONFIG_DIR` to pick the folder:
 
-> **Renamed ids:** the two guard additions are now `leak-guard` (was `leak-guard`)
-> and `command-guard` (was `command-guard`). The old ids are **not** aliased — update
-> any saved `CT_ADDITIONS` lists, or the install aborts on the unknown id.
-
 ```bash
 CT_CONFIG_DIR="$HOME/.claude-aka" CT_ADDITIONS="secure-settings leak-guard wrap-up" \
   ./install.sh --defaults
@@ -119,14 +115,6 @@ CT_CONFIG_DIR="$HOME/.claude-aka" CT_ADDITIONS="secure-settings leak-guard wrap-
 > addition won't duplicate it, and **unchecking** (deselecting) an addition on a
 > re-run uninstalls it. For a clean rebuild, or to migrate a rich config faithfully,
 > use **Path A**.
->
-> **Upgrading a pre-rename profile?** Profiles created before the hook rename carry
-> the old hook names (`command-guard.ts`, `leak-guard.sh`,
-> `rtk-safe.hook.sh`). Run `./hook-rename.sh [CONFIG_DIR]` once
-> **before** `./install.sh` to retire those old hooks and their stale `settings.json`
-> registrations; the installer then places the renamed
-> `command-guard`/`leak-guard`/`rtk-safe` hooks cleanly. (Newer profiles self-clean via
-> the managed marker, so this one-time step is only for old ones.)
 
 ---
 

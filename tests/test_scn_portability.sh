@@ -9,7 +9,7 @@
 # script is syntax-clean AND free of un-gated GNU-only invocations.
 #
 # Scope = exactly the scripts that actually execute on a user's machine:
-#   install.sh, hook-rename.sh, shared/lib/*.sh, and every config/**/*.sh
+#   install.sh, shared/lib/*.sh, and every config/**/*.sh
 #   hook/skill that the installer deploys.
 #
 # Sandboxed by construction: this test only reads repo files and runs `bash -n`
@@ -23,7 +23,6 @@ echo "test_scn_portability:"
 # covered automatically.
 SCRIPTS=(
   "$REPO_ROOT/install.sh"
-  "$REPO_ROOT/hook-rename.sh"
 )
 while IFS= read -r f; do SCRIPTS+=("$f"); done < <(find "$REPO_ROOT/shared/lib" -name '*.sh' 2>/dev/null)
 while IFS= read -r f; do SCRIPTS+=("$f"); done < <(find "$REPO_ROOT/config" -name '*.sh' 2>/dev/null)

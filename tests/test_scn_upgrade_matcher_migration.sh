@@ -2,7 +2,7 @@
 # Scenario — superseded kit-MATCHER migration machinery (AKA_SUPERSEDED_MATCHERS).
 #
 # The kit can BROADEN a hook's MATCHER across versions while leaving the hook FILE unchanged.
-# When that happens the file-rename cleanup (AKA_LEGACY_HOOKS / the marker self-clean) doesn't
+# When that happens the marker-based file-rename self-clean (install.sh 4d-pre2) doesn't
 # apply, and the matcher-gated dedup (prune_hook_regs_resolving) would read the stale OLD-matcher
 # reg as a deliberate user tweak and keep it — leaving the guard registered under BOTH matchers
 # (double-firing). build_superseded_add + AKA_SUPERSEDED_MATCHERS prune that stale KIT reg before

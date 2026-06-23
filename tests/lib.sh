@@ -11,9 +11,9 @@ REPO_ROOT="$(git -C "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" rev-pa
 ADDITIONS="$REPO_ROOT/config/additions.json"
 
 # Neutralize ambient config-dir vars at the sandbox boundary so a script under test
-# that reads them (e.g. hook-rename.sh targets $CLAUDE_CONFIG_DIR) can NEVER
-# escape onto the operator's real profile. Tests pass the config dir explicitly /
-# override HOME; this is defense-in-depth against an exported var from the live shell.
+# that reads $CLAUDE_CONFIG_DIR can NEVER escape onto the operator's real profile.
+# Tests pass the config dir explicitly / override HOME; this is defense-in-depth
+# against an exported var from the live shell.
 unset CLAUDE_CONFIG_DIR
 
 _PASS=0 ; _FAIL=0
