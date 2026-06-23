@@ -75,6 +75,29 @@ printf 'fake=%s real=%s\n' "$AWS" "$REAL" > "$hide/data.txt"; gitc "$hide" add .
 assert_fail "allowlisted fake does NOT shield a real secret on the same line" "$AR" --repo "$hide" --ref HEAD
 assert_lit "the un-allowlisted value is named in the FAIL" "$REAL" <("$AR" --repo "$hide" --ref HEAD 2>&1; true)
 
+# ── leak-scan-diff.sh: PRE-MERGE gate blocks a branch that ADDS a leak ───────
+# Diff-scoped: fails only on what the branch introduces vs a base, so it catches a
+# leak BEFORE it merges into history (the thing that otherwise forces a re-clone).
+LSD="$REPO_ROOT/tools/leak-scan-diff.sh"
+ds="$(sandbox)/ds"; git init -q "$ds"; mkdir -p "$ds/tools" "$ds/tests"
+cp "$REPO_ROOT/tools/leak-scan-diff.sh" "$REPO_ROOT/tools/leak-lib.sh" "$ds/tools/"
+cp "$REPO_ROOT/tests/audit-allow.txt" "$ds/tests/"
+gitc "$ds" checkout -q -b main
+echo base > "$ds/f"; gitc "$ds" add .; gitc "$ds" commit -qm base
+gitc "$ds" checkout -q -b feature
+echo "an ordinary clean line" >> "$ds/f"; gitc "$ds" add .; gitc "$ds" commit -qm "clean change"
+assert_ok   "leak-scan-diff passes a branch with no new secrets" \
+  bash -c "cd '$ds' && tools/leak-scan-diff.sh main"
+# the branch now ADDS a non-allowlisted secret → must fail
+printf 'token=%s\n' "$REAL" > "$ds/creds.txt"; gitc "$ds" add .; gitc "$ds" commit -qm "add fixture"
+assert_fail "leak-scan-diff FAILS on a branch that adds a secret" \
+  bash -c "cd '$ds' && tools/leak-scan-diff.sh main"
+# an operator identifier in a NEW COMMIT MESSAGE (clean blobs) → must fail
+gitc "$ds" checkout -q -b msgleak main
+echo ok2 > "$ds/g"; gitc "$ds" add .; gitc "$ds" commit -qm "mentions ZZ_op_marker_42"
+assert_fail "leak-scan-diff FAILS on an identifier in a new commit message" \
+  bash -c "cd '$ds' && AKA_LEAK_EXTRA='ZZ_op_marker_42' tools/leak-scan-diff.sh main"
+
 # ── graduate.sh: argument validation guards before touching any repo ─────────
 assert_ok   "graduate --help exits 0" bash -c "AKA_PUBLIC=/nope AKA_DEV=/nope '$GR' --help"
 assert_fail "graduate requires --branch" bash -c "AKA_PUBLIC=/nope AKA_DEV=/nope '$GR'"

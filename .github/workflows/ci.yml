@@ -47,3 +47,30 @@ jobs:
             jq empty "$f" || rc=1
           done < <(git ls-files '*.json')
           exit $rc
+
+  leak-gate:
+    name: leak — no new secrets/identifiers
+    # PR-only: block a branch that ADDS a secret or operator identifier BEFORE it
+    # merges, so contamination never reaches history (which would otherwise force a
+    # history-rewrite + a fleet-wide re-clone). Diff-scoped; backstopped by the
+    # full audit-history scan at publish time.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Check out the PR's REAL head, not the default refs/pull/N/merge ref:
+          # GitHub's synthetic test-merge commit carries the operator's account
+          # identity (a false positive, and not the commit that actually merges).
+          # We scan the branch's own commits.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0   # need the base + merge-base for a diff-scoped scan
+      - name: scan this PR's additions
+        # AKA_LEAK_EXTRA is available on internal-branch PRs; absent on fork PRs
+        # (GitHub withholds secrets) — the scan then covers secret shapes only.
+        env:
+          AKA_LEAK_EXTRA: ${{ secrets.AKA_LEAK_EXTRA }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          tools/leak-scan-diff.sh "origin/${{ github.base_ref }}"

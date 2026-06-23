@@ -32,10 +32,20 @@ review, and test them.
   ```
 
 - **`audit-history.sh`** — pre-seed gate. Scans an entire git history (every blob
-  at every commit + commit messages) for secrets and operator-specific identifiers
-  before it's published. Run it on the public seed right before pushing.
+  at every commit + commit messages + author/committer identity + pathnames) for
+  secrets and operator-specific identifiers before it's published. Run it on the
+  public seed right before pushing.
   ```bash
   tools/audit-history.sh --repo ../aka-claude-tools-public --ref main
+  ```
+
+- **`leak-scan-diff.sh`** — PRE-MERGE gate (CI `leak-gate` job on every PR). Scans
+  only what a branch ADDS vs a base (added lines + new commit messages/identities +
+  new paths), so a leak is caught *before* it merges — which is what avoids a later
+  history-rewrite + fleet re-clone. Diff-scoped; the `audit-history` full scan is the
+  backstop. Also usable as a pre-commit hook.
+  ```bash
+  tools/leak-scan-diff.sh origin/main      # PR-style; or `--staged` as a pre-commit hook
   ```
 
 - **`sync-public.sh`** — gated `dev → public` mirror once both repos share history.
