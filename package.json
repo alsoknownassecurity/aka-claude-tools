@@ -1,7 +1,7 @@
 {
   "name": "aka-claude-tools",
   "private": true,
-  "description": "Dev-only manifest for typechecking the bun-runtime hooks (command-guard.ts, statusline.ts). The hooks themselves run with zero dependencies and need no package.json — this exists solely so CI can run `tsc --noEmit` against them.",
+  "description": "Dev-only manifest for typechecking the bun-runtime hooks (command-guard.ts, statusline.ts, rtk-safe.ts). The hooks themselves run with zero dependencies and need no package.json — this exists solely so CI can run `tsc --noEmit` against them.",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

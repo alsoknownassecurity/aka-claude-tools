@@ -774,12 +774,14 @@ apply_additions() {
   # empty dir at apply_entry, which is benign — no settings/payload/rc are written).
   # command-guard is a default-on SECURITY hook whose runtime is bun; shipping it
   # silently disabled is not an option, so a missing bun ABORTS rather than soft-
-  # skips. The statusline is a .ts that also cannot run without bun (it can't degrade
-  # like the old bash version), so bun is required when EITHER is selected — a selection
-  # with neither still installs. ensure_dep offers to install bun first (interactive);
-  # it die()s only on decline / non-interactive-absent, so a partial apply is impossible.
-  if is_selected command-guard "$_sel_ids" || is_selected statusline "$_sel_ids"; then
-    ensure_dep bun "bun — required runtime for command-guard and/or the statusline" 1
+  # skips. The statusline and rtk-safe are .ts hooks that also cannot run without bun
+  # (they can't degrade like the old bash versions), so bun is required when ANY of the
+  # three is selected — a selection with none still installs. ensure_dep offers to install
+  # bun first (interactive); it die()s only on decline / non-interactive-absent, so a
+  # partial apply is impossible.
+  if is_selected command-guard "$_sel_ids" || is_selected statusline "$_sel_ids" \
+     || is_selected rtk-safe "$_sel_ids"; then
+    ensure_dep bun "bun — required runtime for command-guard, statusline, and/or rtk-safe" 1
   fi
 
   # ── build ──
@@ -839,10 +841,15 @@ apply_additions() {
     ensure_dep trufflehog "trufflehog (command-guard secret detection)" 0 || true
   fi
   if is_selected rtk-safe "$_sel_ids"; then
+    # bun is guaranteed present here — the hard-dependency gate above aborts the install
+    # if rtk-safe is selected without bun (the .ts can't degrade-run like the old .sh).
+    local bun_bin; bun_bin="$(command -v bun)"
     ensure_dep rtk "rtk (RTK rewriting)" 0 || true
-    # rtk-safe self-skips at runtime if rtk/jq are absent, so it's safe to register unconditionally.
-    place_file "$CONFIG_SRC/hooks/rtk-safe.sh" "$config_dir/hooks" +x
-    add="$(jq --arg cmd "$cqd/hooks/rtk-safe.sh" \
+    # rtk-safe self-skips at runtime if rtk is absent, so it's safe to register unconditionally.
+    place_file "$CONFIG_SRC/hooks/rtk-safe.ts" "$config_dir/hooks" +x
+    # Register with bun's ABSOLUTE path (same two-token quoted shape as command-guard/
+    # statusline): both tokens shq()-quoted so spaces/metachars/quotes don't split.
+    add="$(jq --arg cmd "$(shq "$bun_bin") $cqd/hooks/rtk-safe.ts" \
       '.hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}]' <<<"$add")"
     # Read-only rtk allowlist: the rewrite changes the command string, so the
     # user's existing allow rules (e.g. Bash(git status:*)) no longer match the

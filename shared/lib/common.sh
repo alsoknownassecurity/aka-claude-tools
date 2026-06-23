@@ -443,7 +443,7 @@ rc_source_chain() {
 # throwaway migration script use, so detection and pruning can never disagree.
 #   command-guard.ts       -> command-guard.ts   (Bash egress)
 #   leak-guard.sh  -> leak-guard.sh        (web egress)
-#   rtk-safe.hook.sh -> rtk-safe.sh
+#   rtk-safe.hook.sh -> rtk-safe.ts
 AKA_LEGACY_HOOKS="command-guard.ts leak-guard.sh rtk-safe.hook.sh"
 
 # Shared jq predicate. A registration "belongs to THIS profile" iff its command,

@@ -34,10 +34,10 @@
     {
       "id": "rtk-safe",
       "name": "rtk-safe",
-      "prompt": "rtk-safe — transparent rtk rewrites on proven-safe commands for token savings [needs rtk]?",
+      "prompt": "rtk-safe — transparent rtk rewrites on proven-safe commands for token savings [bun; needs rtk]?",
       "recommended": true,
-      "description": "PreToolUse rewrite on Bash. Transparently rewrites git/gh/cat/ls/find/npm/docker/etc. to compact `rtk` equivalents for token savings. Self-skips at runtime if rtk/jq are absent, so it's inert until you install rtk. Also installs a strictly read-only rtk allowlist (rtk-allowlist.json) so rewritten read commands don't add prompt friction; mutating/egress forms still prompt.",
-      "hook": "hooks/rtk-safe.sh",
+      "description": "PreToolUse rewrite on Bash. Transparently rewrites git/gh/cat/ls/find/npm/docker/etc. to compact `rtk` equivalents for token savings. Runs under bun (like command-guard); self-skips at runtime if rtk is absent, so it's inert until you install rtk. Also installs a strictly read-only rtk allowlist (rtk-allowlist.json) so rewritten read commands don't add prompt friction; mutating/egress forms still prompt.",
+      "hook": "hooks/rtk-safe.ts",
       "settings": "rtk-allowlist.json",
       "matcher": "Bash",
       "event": "PreToolUse"
