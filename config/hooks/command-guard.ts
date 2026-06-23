@@ -294,20 +294,22 @@ function detectStartupWrite(toks: Tok[]): boolean {
   return false;
 }
 
-// Structural alerts — command-guard-specific (NOT shared; not secret patterns).
-const EGRESS_ALERTS: [RegExp, string][] = [
-  [/curl.*(-X POST|--data|\s-d\s)/i, 'HTTP POST via curl'],
-  [/wget.*(--post-data|--post-file)/i, 'HTTP POST via wget'],
-  [/\bnc\s/i, 'Netcat usage'],
-  [/\bncat\s/i, 'Ncat usage'],
-  [/\bsocat\s/i, 'Socat usage'],
-  [/sendmail\b/i, 'Sendmail usage'],
-  [/^(printenv|env)\s*$/i, 'Environment variable dump'],
-  [/^set\s*$/i, 'Shell variable dump'],
-  [/python3?\s+-c\s/i, 'Python inline execution'],
-  [/node\s+-e\s/i, 'Node inline execution'],
-  [/ruby\s+-e\s/i, 'Ruby inline execution'],
-  [/perl\s+-e\s/i, 'Perl inline execution'],
+// Informational egress NOTICES — surfaced (allow + warn), never a deny. These are
+// command-SHAPE heuristics local to this guard (distinct from the shared credential
+// SHAPES in secret-patterns.json, which feed the deny tiers). Each rule pairs a matcher
+// with the notice text; related vectors are grouped into one rule (the netcat family, the
+// inline interpreters) rather than one row per binary. Because these only warn, imprecise
+// matching is never a security hole — the blocking decisions are made above.
+const EGRESS_NOTICES: { match: RegExp; note: string }[] = [
+  { match: /\bcurl\b.*?(?:-d\b|--data(?:-[a-z]+)?\b|-X[ \t]*POST\b)/i, note: 'curl HTTP upload (POST / --data)' },
+  { match: /\bwget\b.*?--post-(?:data|file)\b/i,                       note: 'wget HTTP upload (--post-*)' },
+  { match: /\b(?:nc|ncat)\b[ \t]/i,                                       note: 'netcat / ncat connection' },
+  { match: /\bsocat\b[ \t]/i,                                             note: 'socat relay' },
+  { match: /\bsendmail\b/i,                                               note: 'sendmail invocation' },
+  { match: /^[ \t]*(?:env|printenv)[ \t]*$/i,                             note: 'bare environment dump' },
+  { match: /^[ \t]*set[ \t]*$/i,                                          note: 'bare shell-variable dump' },
+  { match: /\bpython3?[ \t]+-c\b/i,                                       note: 'inline python execution (-c)' },
+  { match: /\b(?:node|ruby|perl)[ \t]+-e\b/i,                             note: 'inline interpreter execution (-e)' },
 ];
 
 function loadPatterns(): { outbound: RegExp; creds: [RegExp, string][] } | null {
@@ -445,9 +447,9 @@ function main(): void {
   }
 
   // Other egress vectors — surface but allow.
-  for (const [pattern, label] of EGRESS_ALERTS) {
-    if (pattern.test(command)) {
-      console.error(`[aka-claude-tools SECURITY] ⚠️ egress alert (command-guard): ${label} (allowed).`);
+  for (const { match, note } of EGRESS_NOTICES) {
+    if (match.test(command)) {
+      console.error(`[aka-claude-tools SECURITY] ⚠️ egress alert (command-guard): ${note} (allowed).`);
       process.exit(0);
     }
   }
