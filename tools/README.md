@@ -41,6 +41,12 @@ review, and test them.
 Both default the repo to the clone they live in and are fully overridable by env
 (`AKA_REPO`, `CLAUDE_CONFIG_DIR`, `AKA_PUBLIC`, `AKA_DEV`).
 
+- **[`public-export-runbook.md`](public-export-runbook.md)** — example/template for the
+  **one-time** seed of the public upstream as *filtered git history* (scrub every
+  operator identifier + must-not-ship blob across all of history, gated by
+  `audit-history.sh`). Placeholders only; real values stay in `leak-patterns.local`
+  + a private note. The ongoing flow above (`graduate.sh` → public PR) is separate.
+
 **Leak patterns.** The committed patterns ([`leak-lib.sh`](leak-lib.sh)) are generic
 and name no specific person/host/namespace. Your own identifiers (name, tailnet,
 private namespaces) stay out of the repo — put them in a gitignored
