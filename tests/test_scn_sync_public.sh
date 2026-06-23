@@ -12,7 +12,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "test_scn_sync_public:"
 
 SYNC="$REPO_ROOT/tools/sync-public.sh"
-LEAK='example-host|example-user'   # stand-in operator identifiers for the gate
+# Synthetic stand-in operator identifiers — NEVER real ones. This committed file
+# must stay scrub-clean: a real name/host here re-contaminates the repo and trips
+# the leak gate (it did once). The test supplies these as its own AKA_LEAK_EXTRA,
+# so any distinctive fake works.
+OPID='zzfakeop'; HOSTID='zzfakehost'
+LEAK="$OPID|$HOSTID"
 
 # ── build a dev repo (with the tools) that tracks a bare "origin" ────────────
 ORIGIN="$(sandbox)/origin.git"; git init -q --bare "$ORIGIN"
@@ -61,16 +66,16 @@ assert_ngrep "A: off-main secret tag is NOT in the publish set" "offmain-secret"
 assert_ngrep "A: off-main sentinel never surfaces"            "OFFMAIN-ONLY-SENTINEL" "$OUT"
 
 # ── B. leak pattern in a tag NAME → abort ───────────────────────────────────
-git tag "v1.0-example-user-host" main           # main-reachable, leaky NAME
-git push -q origin "v1.0-example-user-host"
+git tag "v1.0-${OPID}-tag" main            # main-reachable, leaky NAME
+git push -q origin "v1.0-${OPID}-tag"
 git remote remove public 2>/dev/null || true
 run_sync; rcB=$?
 assert_eq   "B: leaky tag NAME aborts (non-zero)" "1" "$rcB"
 assert_grep "B: abort names the tag-NAME leak" "leak pattern in tag NAME" "$OUT"
-git tag -d "v1.0-example-user-host" >/dev/null; git push -q origin :refs/tags/v1.0-example-user-host
+git tag -d "v1.0-${OPID}-tag" >/dev/null; git push -q origin ":refs/tags/v1.0-${OPID}-tag"
 
 # ── C. leak pattern in an annotated tag MESSAGE → abort ──────────────────────
-git tag -a "v1.1" -m "release built on example-host" main
+git tag -a "v1.1" -m "release built on $HOSTID" main
 git push -q origin "v1.1"
 git remote remove public 2>/dev/null || true
 run_sync; rcC=$?
@@ -81,7 +86,7 @@ git tag -d "v1.1" >/dev/null; git push -q origin :refs/tags/v1.1
 # ── D. clean NAME + clean MESSAGE, but leaky TAGGER identity → abort ─────────
 # The tagger header lives in the tag OBJECT, not in %(contents); a name/message-
 # only scan would miss it. cat-file scanning catches it.
-git -c user.name="example-user host" -c user.email="example-user@desk.example" \
+git -c user.name="$OPID builder" -c user.email="$OPID@example.test" \
   tag -a "v2.0" -m "clean release notes" main
 git push -q origin "v2.0"
 git remote remove public 2>/dev/null || true
