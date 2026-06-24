@@ -1,4 +1,4 @@
-# Install a aka-claude-tools profile — driven by your Claude Code instance
+# Install an aka-claude-tools profile — driven by your Claude Code instance
 
 **You (Claude) are setting up a new isolated Claude Code config profile for the
 user, from inside their already-authenticated session.** You **own the judgment**

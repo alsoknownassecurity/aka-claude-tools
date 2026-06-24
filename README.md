@@ -121,7 +121,8 @@ If you're a coding agent reading this to set up a profile, don't improvise — f
 [`agent-install.md`](agent-install.md). It's the deterministic spec: enumerate existing
 profiles with `./install.sh --enumerate`, migrate cleanly, then drive `./install.sh --apply`
 and `./install.sh --alias` (install.sh is the only sanctioned shell-rc writer). Use
-`--no-auth-inherit` when the profile is for a different account.
+`--no-auth-inherit` when the profile is for a different account. A machine-readable
+map of the repo lives at [`llms.txt`](llms.txt).
 
 ## Beyond Claude Code
 
