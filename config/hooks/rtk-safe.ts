@@ -142,8 +142,11 @@ const RULES: Rule[] = [
     }
     return null;
   },
-  // rg/grep are deliberately NOT rewritten: rtk grep mishandles leading flags (-r/-E/-i/-A/-B)
-  // and its own -v/-l/-m shadow grep's, silently changing results.
+  // rg/grep are deliberately NOT rewritten — see issue #37 for the full benchmark.
+  // Short: rtk grep 0.42.4 silently inverts -v (its own -v = verbosity, not grep's invert)
+  // and its "N matches in 0 files" path returns empty output for the fleet's most common
+  // shape (grep -n). Re-evaluate only after rtk fixes the empty-display bug AND stops
+  // shadowing -v; re-run the flag-distribution benchmark before re-enabling.
   (b) => (startsWithWord(leadWord(b), 'ls') ? front(b) : null),
   (b) => (startsWithWord(leadWord(b), 'tree') ? front(b) : null),
   (b) => (withArgs(b, 'find') ? front(b) : null),
@@ -231,7 +234,7 @@ const RULES: Rule[] = [
   (b) => {
     if (!/^uv\s+pip($|\s)/.test(b)) return null;
     const sub = b.replace(/^uv\s+pip\s*/, '').split(/\s+/, 1)[0] ?? '';
-    return ['list', 'outdated', 'install', 'show'].includes(sub) ? 'rtk pip ' + b.slice('uv pip '.length) : null;
+    return ['list', 'outdated', 'install', 'show'].includes(sub) ? 'rtk pip ' + b.replace(/^uv\s+pip\s*/, '') : null;
   },
   (b) => (startsWithWord(leadWord(b), 'mypy') ? front(b) : null),
   (b) => (startsWithWord(b, 'python -m mypy') ? 'rtk mypy' + b.slice('python -m mypy'.length) : null),
