@@ -48,7 +48,17 @@ top-to-bottom; skip steps that don't apply.
    update the changelog / README. Don't invent ceremony the repo doesn't
    already use.
 
-7. **Surface loose ends.** List anything unfinished, any follow-up work, and any
-   decision that still needs a human, so the next session can pick up cold.
+7. **Surface true loose ends — things we could genuinely lose.** A loose end is
+   work that is at risk *right now* because nothing durable holds it: uncommitted
+   or unpushed changes, an undocumented decision or finding made this session, a
+   half-applied migration, a broken state left mid-flight. Those are the only
+   things to flag as loose ends — call them out plainly so they aren't lost.
+   - **Do NOT list as loose ends** follow-ups already safely captured somewhere
+     durable — backlog tasks, tracked issues, plan checklists, saved memory.
+     They aren't at risk; they just await execution.
+   - You may still add a brief **"Captured for later"** note pointing to where
+     such follow-ups live (e.g. "T5/T6 in the backlog"), but keep it separate
+     from loose ends and don't dress it up as unfinished business.
+   - If nothing is genuinely at risk, say so — "no loose ends" is a valid result.
 
 Never merge. Never push.
