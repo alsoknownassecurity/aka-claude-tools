@@ -17,7 +17,7 @@
   <!-- Wordmark -->
   <text x="300" y="232" font-family="ui-monospace, 'Geist Mono', monospace" font-size="76" font-weight="700" fill="#F6F8F9">aka-claude-tools</text>
   <text x="304" y="296" font-size="36" font-weight="400" fill="#B0C7E2">Security defaults for Claude Code.</text>
-  <text x="304" y="346" font-size="36" font-weight="400" fill="#B0C7E2">The floor a fresh agent should start from.</text>
+  <text x="304" y="346" font-size="36" font-weight="400" fill="#B0C7E2">The clean slate a fresh Claude Code should start from.</text>
   <!-- Pills -->
   <g font-size="26" font-weight="600">
     <g transform="translate(304,402)">

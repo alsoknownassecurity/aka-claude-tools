@@ -16,7 +16,7 @@
   </g>
   <!-- Wordmark -->
   <text x="190" y="132" font-family="ui-monospace, 'Geist Mono', monospace" font-size="50" font-weight="700" fill="#F6F8F9">aka-claude-tools</text>
-  <text x="192" y="178" font-size="24" font-weight="400" fill="#B0C7E2">The floor a fresh Claude Code should start from.</text>
+  <text x="192" y="178" font-size="24" font-weight="400" fill="#B0C7E2">The clean slate a fresh Claude Code should start from.</text>
   <!-- Pills -->
   <g font-size="17" font-weight="600">
     <g transform="translate(192,210)">
