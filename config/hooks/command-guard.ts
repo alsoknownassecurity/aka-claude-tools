@@ -244,6 +244,48 @@ function isInterpreterWord(w: string): boolean {
 // above): `env -S '…'` (split-string embeds the command in a quoted string) and space-separated
 // long-option arg forms (`env --unset FOO bash`); both are obfuscation, not accidental danger.
 const SUBSHELL_OPENERS = new Set(['(', '{']);
+// Once the pipe target is confirmed a shell interpreter, decide whether it actually CONSUMES
+// the piped stdin (the `curl URL | bash` risk) or just runs a NAMED SCRIPT FILE and ignores
+// stdin (`printf '{}' | bash ./script.sh` — a benign FP, issue #94). Starting at the token
+// after the interpreter word (index j), scan its arguments:
+//   • `-s`            → bash explicitly reads the program from stdin → still danger (true).
+//   • `-c`            → runs the inline command-string ARG; the piped data becomes that
+//                        command's stdin. This is a determined pipe-into-shell exec idiom, not
+//                        a benign named-script run → danger (true). Alone or bundled (`-ic`,
+//                        `-lc`, `-xc`), and the same across sh/zsh.
+//   • `--`            → end of options; the NEXT non-operator word is the script file → safe.
+//   • a non-flag word → the script file → bash runs it, ignores stdin → safe (false).
+//   • `-o`/`-O`, `--init-file`, `--rcfile` → consume the NEXT separate token as their VALUE
+//                        (not a script file); bash still reads stdin after them. Skip BOTH the
+//                        flag and its value — but ONLY when that next token is actually present
+//                        AND a non-operator word. If it's an operator (`| bash -O && ls`) or
+//                        missing (`| bash -O`), the flag took no value, so we must NOT skip past
+//                        it; bash reads stdin → danger. `-o`/`-O` handled standalone and
+//                        bundled-end (`-eo`, `-xO`); mid-bundle forms embed the value in the
+//                        same token and fall through to j++ (no separate token to skip).
+//   • any other flag  → pass-through (`-e`, `-x`, `-u`, …) → keep scanning.
+// No script-file word before an operator / end (bare `| bash`, `| bash -e`) → stdin → danger.
+function shellInterpreterReadsStdin(toks: Tok[], j: number): boolean {
+  while (j < toks.length && !toks[j].op) {
+    const a = toks[j].v;
+    if (a === '--') {                                     // end of options
+      j++;
+      return !(j < toks.length && !toks[j].op);           // next word = script file → safe
+    }
+    if (!a.startsWith('-')) return false;                 // bare word → script file → safe
+    if (/^-[a-zA-Z]*s/.test(a)) return true;              // `-s` (alone or bundled) → reads stdin
+    if (/^-[a-zA-Z]*c/.test(a)) return true;              // `-c` (alone or bundled) → runs inline command arg → danger
+    // Flags that consume the NEXT separate token as an option value (not a script file).
+    // Skip BOTH only when that value token is present and not an operator; otherwise the flag
+    // took no value, bash still reads stdin, and skipping an operator/file would mis-allow it.
+    if (/^-[a-zA-Z]*[oO]$/.test(a) || a === '--init-file' || a === '--rcfile') {
+      if (j + 1 < toks.length && !toks[j + 1].op) { j += 2; continue; }  // value present → skip both
+      return true;                                        // no value (operator/end) → reads stdin
+    }
+    j++;                                                  // a pass-through flag → keep scanning
+  }
+  return true;                                            // no script file → reads stdin
+}
 function pipeFeedsShellInterpreter(toks: Tok[], j: number): boolean {
   // skip a leading subshell `(`/process-group `{` opener: `| (bash)` / `| { bash; }` run a shell.
   // `(` is an operator token, `{` a bare word — accept either, then resolve the inner command.
@@ -252,7 +294,7 @@ function pipeFeedsShellInterpreter(toks: Tok[], j: number): boolean {
   // class as the command-side env-prefix (issue #114); shell runs the first bare-word command.
   while (j < toks.length && !toks[j].op && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[j].v)) j++;
   while (j < toks.length && !toks[j].op) {
-    if (isInterpreterWord(toks[j].v)) return true;
+    if (isInterpreterWord(toks[j].v)) return shellInterpreterReadsStdin(toks, j + 1);
     if (cmdBasename(toks[j].v) !== 'env') return false;   // not an interpreter, not env → done
     j++;                                                   // step past `env` toward its command
     while (j < toks.length && !toks[j].op) {
