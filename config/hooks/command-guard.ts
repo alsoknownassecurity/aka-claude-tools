@@ -248,6 +248,9 @@ function pipeFeedsShellInterpreter(toks: Tok[], j: number): boolean {
   // skip a leading subshell `(`/process-group `{` opener: `| (bash)` / `| { bash; }` run a shell.
   // `(` is an operator token, `{` a bare word — accept either, then resolve the inner command.
   while (j < toks.length && SUBSHELL_OPENERS.has(toks[j].v)) j++;
+  // skip leading NAME=VALUE assignments on the pipe RHS (e.g. `| IFS=x bash`) — same bypass
+  // class as the command-side env-prefix (issue #114); shell runs the first bare-word command.
+  while (j < toks.length && !toks[j].op && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[j].v)) j++;
   while (j < toks.length && !toks[j].op) {
     if (isInterpreterWord(toks[j].v)) return true;
     if (cmdBasename(toks[j].v) !== 'env') return false;   // not an interpreter, not env → done
@@ -368,8 +371,13 @@ function detectStartupWrite(toks: Tok[]): boolean {
   for (const sc of cmds) {
     const words = sc.filter((t) => !t.op).map((t) => t.v);
     if (!words.length) continue;
-    const cmd = words[0];
-    const args = words.slice(1);
+    // Skip leading NAME=VALUE env-assignments (e.g. `FOO=bar tee ~/.zshrc`) so
+    // a prefixed env var can't hide the real command from the verb checks below.
+    let ci = 0;
+    while (ci < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[ci])) ci++;
+    if (ci >= words.length) continue;
+    const cmd = cmdBasename(words[ci]);   // normalize path (issue #115: `/usr/bin/tee ~/.zshrc`)
+    const args = words.slice(ci + 1);
     const nonFlag = args.filter((a) => !a.startsWith('-'));
     if (cmd === 'tee') {                                          // tee writes ALL its file args
       if (nonFlag.some(isStartupFile)) return true;
