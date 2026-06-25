@@ -8,13 +8,47 @@ Pre-1.0: minor versions may carry breaking changes; they are called out below.
 
 ## [Unreleased]
 
+## [0.3.0] — guard hardening + agent-driven alias & migration
+
+Closes several command-guard bypasses surfaced in review, adds agent-driven alias
+removal and a clean-start migration path, and makes hook registrations host-portable.
+
+### Added
+- `install.sh --delete-alias` — the sole sanctioned way for an agent to remove a
+  managed launcher-alias block from the shell rc, mirroring `--alias`'s rc-write gate.
+  An optional `CT_CONFIG_DIR` refuses a cross-profile clobber, and it fails closed on
+  an unparsable managed block (#112, #116).
+- agent-install (Path A) offers a **clean-start** path when an existing config is
+  notably layered — a minimal, hardened, secure-by-default profile instead of a full
+  migration — while still running the shell-startup security pass and auth seeding (#107).
+
+### Security
+- command-guard: hardened pipe-to-shell and startup-file-write detection. A named
+  script that ignores stdin (`… | bash ./script.sh`) is no longer false-flagged as a
+  `curl | bash` pipe-to-shell (#94), while forms that previously slipped through are
+  blocked again — inline code (`… | bash -c '<code>'`, including `-ic`/`-lc` and
+  `sh`/`zsh -c`), a value-less option mistaken for a script arg (`… | bash -O && ls`),
+  env-assignment-prefixed pipes and writes (`IFS=x curl | bash`, `FOO=bar tee ~/.zshrc`),
+  and absolute-path startup writes (`/usr/bin/tee ~/.zshrc`) (#110, #111, #104, #114, #115).
+
 ### Fixed
 - Registered hook/statusLine commands now use a host-portable `$HOME'<dir>'/hooks/…`
   form instead of an absolute `/Users/<user>/…` path when the config dir is under
   `$HOME`. A profile that is backed up / synced across machines no longer breaks when a
-  sibling host pulls it (the absolute path was "foreign" there). Deselect/stash matching
-  recognises both the new portable form and the legacy absolute form, so upgrades are
-  seamless; non-`$HOME` config dirs keep the absolute form unchanged.
+  sibling host pulls it; deselect/stash matching recognises both the new portable form
+  and the legacy absolute form, so upgrades are seamless, and non-`$HOME` config dirs
+  keep the absolute form unchanged (#118).
+- rtk-safe strips the `uv pip` subcommand prefix with a regex rather than a fixed-width
+  slice, so irregular whitespace (`uv  pip …`, tab-separated) rewrites correctly (#37, #108).
+
+### Documentation
+- Optimised the repo for agentic discovery — `llms.txt`, an Open Graph card, and
+  canonicalisation (#106).
+- Clean-slate tagline and brand-asset refresh (#113).
+- `settings.base.json`: corrected the stale maintainer note — Bash-redirection writes
+  to startup files *are* covered by command-guard (#98, #109).
+- `wrap-up` command: only flag genuinely at-risk work as loose ends; durably-captured
+  follow-ups go under a separate note (#105).
 
 ## [0.2.0] — public-ready prep
 
@@ -76,7 +110,8 @@ state before the v0.2.0 public-ready prep.
 Initial internal deployment of the isolated-profile installer, the secure-defaults
 base, and the guard hooks.
 
-[Unreleased]: https://github.com/alsoknownassecurity/aka-claude-tools/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/alsoknownassecurity/aka-claude-tools/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/alsoknownassecurity/aka-claude-tools/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/alsoknownassecurity/aka-claude-tools/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/alsoknownassecurity/aka-claude-tools/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alsoknownassecurity/aka-claude-tools/releases/tag/v0.1.0
