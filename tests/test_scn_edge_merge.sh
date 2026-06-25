@@ -53,9 +53,10 @@ assert_file "second install placed settings.json" "$S2"
 jq '.hooks.PreToolUse += [{"matcher":"Edit","hooks":[{"type":"command","command":["my-tool","--run"]}]}]' \
   "$S2" > "$S2.t" && mv "$S2.t" "$S2"
 
-# The installer shell-quotes the config-dir portion of the command (space-safe),
-# so the registered string is '<dir>'/hooks/leak-guard.ts — match that exact form.
-WG="'$P2'/hooks/leak-guard.ts"
+# The installer writes the config-dir portion in host-PORTABLE form
+# ($HOME'<rest>'/hooks/…); P2 lives under $SB2 (the sandbox HOME), so the registered
+# string is $HOME'<rest>'/hooks/leak-guard.ts. Match that exact form.
+WG="\$HOME'${P2#"$SB2"}'/hooks/leak-guard.ts"
 assert_lit "leak-guard hook registered before deselect" "$WG" "$S2"
 
 # Deselect everything (uninstall the kit additions in place).

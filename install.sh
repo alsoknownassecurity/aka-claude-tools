@@ -106,6 +106,25 @@ fi
 # the installer wrote before, so existing registrations are byte-identical.
 shq() { local s=$1; s=${s//\'/\'\\\'\'}; printf "'%s'" "$s"; }
 
+# cfg_token <abs-dir> — shell-safe, host-PORTABLE token for the config dir as it
+# appears INSIDE a registered hook `command`. A $HOME-relative dir becomes
+#   $HOME'<rest>'   (literal, UNQUOTED $HOME so the running shell expands it per host;
+# the remainder shq()-quoted so spaces / metachars / embedded quotes stay safe). So the
+# written settings.json carries NO absolute /Users/<who> literal and stays valid on every
+# host — a profile that is git-backed/synced no longer breaks when a SIBLING host pulls it
+# (the prior absolute form was "foreign" there and tripped the backup hook's heal). A dir
+# OUTSIDE $HOME cannot be portablized, so it stays the fully-quoted absolute form shq()
+# produced before — byte-identical to the legacy registration, so non-$HOME profiles are
+# unaffected. Pure bash; POSIX `${p#…}` (no GNU-isms), so it stays BSD/Linux-portable.
+cfg_token() {
+  local p=$1
+  case "$p" in
+    "$HOME")   printf '%s' '$HOME' ;;
+    "$HOME"/*) printf '$HOME%s' "$(shq "/${p#"$HOME"/}")" ;;
+    *)         shq "$p" ;;
+  esac
+}
+
 # ── settings merge ───────────────────────────────────────────────────────────
 # merge_settings <existing.json|''> <additions.json-string>  -> merged JSON on stdout
 # Deep-merges (later wins) but UNIONS permission arrays and hook-event arrays so a
@@ -284,12 +303,20 @@ prune_hook_regs_resolving() {
 #    style, the join loses the literal quotes and the kit's OWN tail stops matching → a deselect
 #    leaves the kit statusLine in place. That is a non-destructive false NEGATIVE (a stale entry
 #    the user can remove), never a clobber. statusLine.command is a string in CC's schema today.
+# prune_statusline <portable-stem> [<legacy-stem>]
+# Matches the kit's statusLine by its END-anchored quoted tail. Two stems are accepted so
+# the test recognises a profile written by EITHER the portable cfg_token() form
+# ($HOME'<dir>'/hooks/statusline) OR a pre-portability absolute form
+# (<shq(config_dir)>/hooks/statusline) — so deselect/stash stay correct across the upgrade
+# that flipped the registration to $HOME. <legacy-stem> defaults to <portable-stem> when
+# omitted (single-form callers unchanged).
 prune_statusline() {
-  jq --arg stem "$1" '
+  jq --arg stem "$1" --arg legacy "${2:-$1}" '
     if (.statusLine|type)=="object"
        and ((.statusLine.command) as $c
             | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-            | (endswith($stem + ".sh") or endswith($stem + ".ts")))
+            | ( endswith($stem + ".sh")   or endswith($stem + ".ts")
+                or endswith($legacy + ".sh") or endswith($legacy + ".ts") ))
     then (if has("_aka_prior_statusLine")
           then .statusLine = ._aka_prior_statusLine | del(._aka_prior_statusLine)
           else del(.statusLine) end)
@@ -346,14 +373,16 @@ prune_addition_from_settings() {
   sline="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .statusLine // ""' "$CONFIG_SRC/additions.json")"
   setf="$(jq -r --arg i "$id" '.additions[] | select(.id==$i) | .settings // ""'   "$CONFIG_SRC/additions.json")"
   [ -n "$hook" ]  && s="$(printf '%s' "$s" | prune_hook_regs "$(basename "$hook")")"
-  # End-anchored on the kit's EXACT registered tail "<shq(config_dir)>/hooks/statusline"
-  # (either extension), built with the SAME shq() the registration used — so it matches the
+  # End-anchored on the kit's EXACT registered tail "<dir-token>/hooks/statusline" (either
+  # extension), built with the SAME cfg_token() the registration uses — so it matches the
   # kit's own command verbatim while a user statusLine ending in /hooks/statusline.{sh,ts}
   # in some OTHER dir, or one passing the path as data, is never matched (consistent with
-  # the stash guard in apply_additions). $sline is the current manifest path
-  # (…/statusline.ts); ${sline%.*} drops the extension to a stem and prune_statusline tests
-  # both .sh and .ts, so a residual pre-port .sh registration in THIS config dir also prunes.
-  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(shq "$config_dir")/${sline%.*}")"
+  # the stash guard in apply_additions). Both the PORTABLE form ($HOME'<dir>'/…) and the
+  # LEGACY absolute form (<shq(config_dir)>/…) are passed, so a profile written before the
+  # portability flip still prunes. $sline is the current manifest path (…/statusline.ts);
+  # ${sline%.*} drops the extension to a stem and prune_statusline tests both .sh and .ts,
+  # so a residual pre-port .sh registration in THIS config dir also prunes.
+  [ -n "$sline" ] && s="$(printf '%s' "$s" | prune_statusline "$(cfg_token "$config_dir")/${sline%.*}" "$(shq "$config_dir")/${sline%.*}")"
   # The statusline addition can pin a weather location into .preferences.location at
   # install; prune_statusline only drops the statusLine command, so remove that pinned
   # preference too (it is the only thing the kit writes under .preferences).
@@ -805,12 +834,14 @@ apply_additions() {
   local add='{}'
   # Claude Code runs a hook's `command` through a shell, so a config dir containing
   # spaces or shell metachars would word-split / mis-parse the registered path.
-  # shq() quotes the DIRECTORY portion (cqd) — escaping even an embedded single quote
-  # — and the `/hooks/<file>` suffix stays outside the quotes, so the path is shell-safe
-  # AND its basename still matches the prune/registration checks (… endswith "/x.sh").
-  # config_dir is already absolute + $HOME-expanded here. For a quote-free dir shq yields
-  # the same '<dir>' the installer wrote before, so registrations stay byte-identical.
-  local cqd; cqd="$(shq "$config_dir")"
+  # cfg_token() yields the DIRECTORY portion (cqd) shell-safely AND host-portably: a
+  # $HOME-relative dir becomes  $HOME'<rest>'  (unquoted $HOME so each host's shell
+  # expands it, remainder quoted), so the written command carries no absolute /Users
+  # literal; a non-$HOME dir stays the fully-quoted absolute form. Either way the
+  # `/hooks/<file>` suffix stays outside the quotes, so the command still ends with the
+  # literal "/hooks/<file>" the prune/registration checks anchor on (… endswith "/x.ts").
+  # config_dir is already absolute + $HOME-expanded here.
+  local cqd; cqd="$(cfg_token "$config_dir")"
   is_selected secure-settings "$_sel_ids" && add="$(jq -s '.[0] * .[1]' <(printf '%s' "$add") "$CONFIG_SRC/settings.base.json")"
 
   # Shared library the egress guards read (single source of truth for the
@@ -1026,13 +1057,19 @@ apply_additions() {
   # prune_addition_from_settings uses, so the manifest stays the single source of truth and
   # stash and prune can't disagree even if that path is later moved.
   local _slrel; _slrel="$(jq -r '.additions[] | select(.id=="statusline") | .statusLine // "hooks/statusline.ts"' "$CONFIG_SRC/additions.json")"
-  local _slstem; _slstem="$(shq "$config_dir")/${_slrel%.*}"
+  # PORTABLE form ($HOME'<dir>'/…) the registration now writes, plus the LEGACY absolute
+  # form (<shq(config_dir)>/…) a pre-portability profile carries — match EITHER so the
+  # kit's own statusLine is never misclassified as the user's during the upgrade that
+  # flipped the registration to $HOME (which would wrongly stash it as _aka_prior).
+  local _slstem;   _slstem="$(cfg_token "$config_dir")/${_slrel%.*}"
+  local _sllegacy; _sllegacy="$(shq "$config_dir")/${_slrel%.*}"
   if is_selected statusline "$_sel_ids" && [ "$existing" != "{}" ]; then
-    if printf '%s' "$existing" | jq -e --arg stem "$_slstem" '
+    if printf '%s' "$existing" | jq -e --arg stem "$_slstem" --arg legacy "$_sllegacy" '
           (.statusLine|type)=="object"
           and ((.statusLine.command) as $c
                | (if ($c|type)=="array" then ($c|join(" ")) else ($c // "") end)
-               | (endswith($stem + ".sh") or endswith($stem + ".ts")) | not)
+               | ( endswith($stem + ".sh")   or endswith($stem + ".ts")
+                   or endswith($legacy + ".sh") or endswith($legacy + ".ts") ) | not)
           and (has("_aka_prior_statusLine")|not)' >/dev/null 2>&1; then
       warn "Replacing your existing statusLine with the kit's — your previous one is saved and restored if you later deselect 'statusline'."
       existing="$(printf '%s' "$existing" | jq '._aka_prior_statusLine = .statusLine')"

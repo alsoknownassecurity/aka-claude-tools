@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: minor versions may carry breaking changes; they are called out below.
 
+## [Unreleased]
+
+### Fixed
+- Registered hook/statusLine commands now use a host-portable `$HOME'<dir>'/hooks/…`
+  form instead of an absolute `/Users/<user>/…` path when the config dir is under
+  `$HOME`. A profile that is backed up / synced across machines no longer breaks when a
+  sibling host pulls it (the absolute path was "foreign" there). Deselect/stash matching
+  recognises both the new portable form and the legacy absolute form, so upgrades are
+  seamless; non-`$HOME` config dirs keep the absolute form unchanged.
+
 ## [0.2.0] — public-ready prep
 
 First public-ready release: the kit is scrubbed of internal traces, the docs are

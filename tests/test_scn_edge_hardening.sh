@@ -32,9 +32,15 @@ assert_ok "leak-guard registration still matches by suffix" \
 assert_ok "command shell-quotes the config dir" \
   bash -c "jq -e '[.hooks.PreToolUse[]?.hooks[].command]|any(startswith(\"'\''\"))' '$S' >/dev/null"
 # And it actually RUNS through a shell despite the space (leak-guard allows benign).
+# The command is now host-PORTABLE ($HOME'<dir>'/…), so execute it with the SAME HOME
+# the install used — exactly as Claude Code runs hooks (the profile lives under $HOME).
 WGCMD="$(jq -r '[.hooks.PreToolUse[].hooks[].command]|map(select(test("leak-guard")))[0]' "$S")"
-printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | sh -c "$WGCMD" >/dev/null 2>&1
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | HOME="$SB" sh -c "$WGCMD" >/dev/null 2>&1
 assert_eq "quoted leak-guard command executes through a shell (space-safe)" "0" "$?"
+# Portability: the registered command uses $HOME and carries NO absolute home literal,
+# so a backup-synced profile stays valid when a SIBLING host pulls it.
+case "$WGCMD" in *'$HOME'*) pass "leak-guard command is host-portable (uses \$HOME)" ;; *) fail "leak-guard command is host-portable (uses \$HOME)" "no \$HOME in: $WGCMD" ;; esac
+case "$WGCMD" in *"$SB"*) fail "leak-guard command carries no absolute home literal" "found $SB in: $WGCMD" ;; *) pass "leak-guard command carries no absolute home literal" ;; esac
 # statusLine command is quoted + suffix-matchable too.
 assert_ok "statusLine command shell-quoted + suffix matches" \
   bash -c "jq -e '(.statusLine.command|startswith(\"'\''\")) and (.statusLine.command|endswith(\"/hooks/statusline.ts\"))' '$S' >/dev/null"
