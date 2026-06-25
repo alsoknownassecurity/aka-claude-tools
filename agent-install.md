@@ -98,8 +98,33 @@ don't specify one:
 
 ## 2. Scan the existing config thoroughly
 
+Start with a quick scale read: count hook registrations, skills, agents,
+commands, and MCP servers in the existing config. This takes seconds and
+determines whether a full migration or a clean start is the better path.
+
+**If the existing setup looks notably layered** — multiple hooks registered from
+outside this kit, a large skills or agents library, a permissions list that
+stretches past a quick read, or a `CLAUDE.md` with deep import chains — offer a
+clean start before cataloguing everything. Summarise what you see and explain the
+trade-off: carrying it forward vs. a minimal, hardened, secure-by-default profile
+they can layer third-party tools back onto at their own pace. Make clear that
+claude.ai conversation history (server-side) is not affected by this choice, and
+neither is anything stored outside the config dir (project CLAUDE.md files, the
+auto-memory system). Content inside the existing config dir — hooks, skills,
+CLAUDE.md imports, permissions — will not be auto-migrated; they'd need to copy
+what they want to keep before proceeding.
+
+If they choose **clean start**: skip the inventory below but **still run the
+Shell-startup security pass** (the read-only section just below the inventory),
+then go directly to Step 3 (confirm additions + plan) then Step 4 (execute).
+Auth and onboarding seeding still apply. Third-party tools can be re-added
+manually at their pace.
+
+If they choose **migrate** (or the existing config isn't notably complex): do
+the full inventory below — **this is where you beat the script**:
+
 Inspect the user's current default config (`~/.claude`, or `$CLAUDE_CONFIG_DIR`
-if set) and inventory what's migratable — **this is where you beat the script**:
+if set) and inventory what's migratable:
 
 - `settings.json` — permissions (allow/deny/ask), env, hooks, statusLine, model,
   and any **absolute paths** that will break under a new config dir.
