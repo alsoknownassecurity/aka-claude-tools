@@ -223,23 +223,40 @@ the user's go-ahead.
   - `~/.claude/.credentials.json` present (Linux/file-based) → copy it in.
   - macOS Keychain → can't migrate (keyed per config dir); tell the user they'll
     `/login` once on first launch, or `claude setup-token` to cover all profiles.
-- **Alias — create it with the engine, NEVER by editing the rc yourself.** Run:
+- **Alias — create/update/delete via the engine, NEVER by editing the rc yourself.**
+  install.sh is the sole sanctioned rc writer (see the top of this file): it
+  reviews the rc *and every file it sources, recursively* (cycle-safe), writing
+  idempotent managed blocks — re-running never duplicates.
+
+  **Create or update** (idempotent — safe to re-run):
   ```
   CT_CONFIG_DIR="<dir>" CT_ALIAS="<alias>" ./install.sh --alias
   ```
-  install.sh is the sole sanctioned rc writer (see the top of this file): it
-  reviews the rc *and every file it sources, recursively* (cycle-safe), then writes
-  an **idempotent** managed block — re-running never duplicates, and each
-  aka-managed profile keeps its own block. Handle its outcome:
-  - **exit 0** — the alias is set (or already resolved to this dir, deduped). Done.
+  - **exit 0** — alias is set (or already resolves to this dir, deduped). Done.
   - **non-zero exit** — `<alias>` is already taken by a **different** target;
     install.sh left it untouched. Pick another name and re-invoke, or skip the
-    alias and give the user the `CLAUDE_CONFIG_DIR="<dir>" claude` invocation.
+    alias and give the user `CLAUDE_CONFIG_DIR="<dir>" claude`.
 
-  Do **not** add the alias with `echo >> ~/.zshrc` or by editing the rc with the
-  Edit tool — the `command-guard` addition blocks an agent writing to startup files,
-  by design (and the secure-settings Edit/Write deny blocks the Edit tool path).
-  Routing through `--alias` is the only path.
+  **Delete** an alias (remove its managed block from the rc):
+  ```
+  CT_CONFIG_DIR="<dir>" CT_ALIAS="<alias>" ./install.sh --delete-alias
+  ```
+  Passing `CT_CONFIG_DIR` is optional but recommended — if the alias points to a
+  **different** profile, the guard refuses the delete rather than clobbering.
+  - **exit 0** — alias removed from rc.
+  - **non-zero exit** — no managed block found, or the alias points to a different
+    profile (run `--enumerate` to inspect and confirm).
+
+  **Rename** an alias (two steps — both use the same engine gate):
+  ```
+  CT_CONFIG_DIR="<dir>" CT_ALIAS="<oldname>" ./install.sh --delete-alias
+  CT_CONFIG_DIR="<dir>" CT_ALIAS="<newname>" ./install.sh --alias
+  ```
+
+  Do **not** write or delete aliases with `echo >> ~/.zshrc`, `sed`, or the Edit
+  tool — the `command-guard` addition blocks an agent writing to startup files by
+  design (and the secure-settings Edit/Write deny blocks the Edit tool path).
+  Routing through `--alias` / `--delete-alias` is the **only** safe path.
 
 ## 5. Verify, then report
 

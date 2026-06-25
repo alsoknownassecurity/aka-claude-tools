@@ -51,6 +51,13 @@
 #                      managed block, or exits non-zero on an unresolved name
 #                      collision (the caller picks another name). Requires CT_CONFIG_DIR
 #                      + CT_ALIAS; implies non-interactive.
+#   --delete-alias     Remove the managed alias block for $CT_ALIAS from the shell rc
+#                      and exit. The ONLY safe way for an agent to delete a launcher
+#                      alias — same rc-write gate as --alias. Optional CT_CONFIG_DIR:
+#                      if supplied, refuses to delete if the alias resolves to a
+#                      DIFFERENT profile (prevents accidental cross-profile clobber).
+#                      Exits non-zero if no managed block for the alias is found.
+#                      Requires CT_ALIAS; implies non-interactive.
 #   --version, -V      Print the kit version (from the VERSION file) and exit. Runs
 #                      before any dependency check, so it works on a bare checkout.
 
@@ -70,6 +77,7 @@ source "$REPO_DIR/shared/lib/common.sh"
 SEED_AUTH=1
 CT_APPLY=0
 CT_ALIAS_MODE=0
+CT_DELETE_ALIAS=0
 CT_ENUMERATE=0
 for arg in "$@"; do
   case "$arg" in
@@ -78,6 +86,7 @@ for arg in "$@"; do
     --no-auth-inherit) SEED_AUTH=0 ;;
     --apply)           CT_APPLY=1; export CT_NONINTERACTIVE=1 ;;
     --alias)           CT_ALIAS_MODE=1; export CT_NONINTERACTIVE=1 ;;
+    --delete-alias)    CT_DELETE_ALIAS=1; export CT_NONINTERACTIVE=1 ;;
     --enumerate)       CT_ENUMERATE=1; export CT_NONINTERACTIVE=1 ;;
   esac
 done
@@ -88,7 +97,7 @@ done
 ensure_dep jq "jq (required)" 1
 # The claude-CLI check and the banner are installer chrome — skip them in --apply
 # (engine) mode, which is invoked programmatically and only needs jq.
-if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ] && [ "$CT_ENUMERATE" != "1" ]; then
+if [ "$CT_APPLY" != "1" ] && [ "$CT_ALIAS_MODE" != "1" ] && [ "$CT_DELETE_ALIAS" != "1" ] && [ "$CT_ENUMERATE" != "1" ]; then
   command -v claude >/dev/null 2>&1 || warn "claude CLI not found on PATH — the alias will still be written, but install Claude Code to use it."
   # bun (command-guard) and trufflehog (leak-guard) are checked/offered when those
   # additions are selected — see the build step below.
@@ -1242,6 +1251,76 @@ alias_entry() {
   setup_alias "$config_dir" "$CT_ALIAS" strict
 }
 
+# ── --delete-alias entry: remove a managed alias block from the shell rc ─────────
+# The ONLY safe way for an agent to delete a launcher alias. Mirrors the --alias
+# gate: validates the name, then removes the marker-delimited managed block. If
+# CT_CONFIG_DIR is provided it also verifies the alias resolves to that profile —
+# refusing to delete if it points somewhere else (prevents cross-profile clobber).
+# Exits non-zero (with a message) if no managed block is found or a safety check
+# fails; exits 0 on success.
+delete_alias_entry() {
+  [ -n "${CT_ALIAS:-}" ] || die "--delete-alias requires CT_ALIAS (the alias name to remove)."
+  assert_safe_alias_name "$CT_ALIAS"
+
+  local rc; rc="$(detect_shell_rc)"
+
+  # Exact marker strings for this alias — used for both inspection and deletion.
+  # Using exact string equality ($0==b) instead of remove_managed_block's family
+  # pattern (id[0-9]*) so that --delete-alias aka never accidentally removes aka2,
+  # which may belong to a different profile created via collision-renaming.
+  local begin end
+  begin="# >>> aka-claude-tools managed: ${CT_ALIAS} >>>"
+  end="# <<< aka-claude-tools managed: ${CT_ALIAS} <<<"
+
+  # Optional profile guard: if CT_CONFIG_DIR is set, read the managed block's actual
+  # alias target and refuse if it points to a DIFFERENT profile. We read the managed
+  # block directly (not alias_target_elsewhere, which strips our block to find
+  # OTHER-scope definitions) so the check covers aliases that only live in our block.
+  if [ -n "${CT_CONFIG_DIR:-}" ]; then
+    local config_dir="${CT_CONFIG_DIR/#\~/$HOME}"
+    [ "$config_dir" != "/" ] && config_dir="${config_dir%/}"
+    case "$config_dir" in /*) ;; *) config_dir="$PWD/$config_dir" ;; esac
+    assert_safe_config_dir "$config_dir"
+    # Extract the alias line from inside our managed block (awk range pattern is safe:
+    # begin/end are literal strings from marker constants, not user-controlled).
+    local mb_line mb_target=""
+    if [ -f "$rc" ]; then
+      mb_line="$(awk -v b="$begin" -v e="$end" '$0==b{in_b=1;next} $0==e{in_b=0;next} in_b{print}' "$rc" \
+                 | grep -m1 "^alias[[:space:]]*${CT_ALIAS}=" || true)"
+      [ -n "$mb_line" ] && mb_target="$(_alias_resolve_target "$mb_line")"
+    fi
+    # Fail closed: if the block exists but can't be parsed (no alias line), refuse rather
+    # than proceeding blindly — an unparsable block may belong to another profile (issue #116).
+    if [ -z "$mb_target" ] && [ -f "$rc" ] && grep -qF "$begin" "$rc"; then
+      die "Alias '${CT_ALIAS}' managed block found in ${rc} but could not be parsed (no alias line). Refusing to delete when CT_CONFIG_DIR is set — inspect the block manually."
+    fi
+    if [ -n "$mb_target" ] && [ "$mb_target" != "OTHER" ] && [ "$mb_target" != "$config_dir" ]; then
+      die "Alias '${CT_ALIAS}' is managed for profile '${mb_target}', not '${config_dir}' — refusing to remove it to avoid a cross-profile clobber. Check with --enumerate first."
+    fi
+  fi
+
+  # Delete exactly this alias's block using string equality on the markers.
+  # Mirrors remove_managed_block's EOF-flush safety: a begin with no matching end
+  # is flushed back rather than silently dropped.
+  if [ -f "$rc" ] && grep -qF "$begin" "$rc"; then
+    local tmp; tmp="$(mktemp)"
+    awk -v b="$begin" -v e="$end" '
+      $0==b { if (skip) for (i=0;i<n;i++) print buf[i]; skip=1; n=0; next }
+      skip && $0==e { skip=0; n=0; next }
+      skip { buf[n++]=$0; next }
+      { print }
+      END { if (skip) for (i=0;i<n;i++) print buf[i] }
+    ' "$rc" > "$tmp"
+    mv "$tmp" "$rc"
+    [ -n "${CT_CONFIG_DIR:-}" ] && meta_set "$config_dir" alias "" || true
+    ok "Removed alias '${CT_ALIAS}' from ${rc}"
+    say "  ${C_DIM}Open a new shell (or: source ${rc}) for the change to take effect.${C_RST}"
+  else
+    warn "No aka-claude-tools-managed alias block found for '${CT_ALIAS}' in ${rc}."
+    return 1
+  fi
+}
+
 # ── --enumerate entry: the host's profile↔alias map as JSON, for Path A ─────────
 # agent-install Step 1 needs the FULL picture before choosing a target: every
 # ~/.claude*/ profile, whether each is kit-managed, and which launcher aliases
@@ -1306,8 +1385,9 @@ EOF
 # Tests source inside a subshell so the top-level `set -euo` stays contained. A
 # normal `./install.sh` is unaffected.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  if   [ "$CT_APPLY" = "1" ];      then apply_entry
-  elif [ "$CT_ALIAS_MODE" = "1" ]; then alias_entry
-  elif [ "$CT_ENUMERATE" = "1" ];  then enumerate_entry
+  if   [ "$CT_APPLY" = "1" ];         then apply_entry
+  elif [ "$CT_ALIAS_MODE" = "1" ];    then alias_entry
+  elif [ "$CT_DELETE_ALIAS" = "1" ];  then delete_alias_entry
+  elif [ "$CT_ENUMERATE" = "1" ];     then enumerate_entry
   else ct_main; fi
 fi
