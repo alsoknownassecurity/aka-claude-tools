@@ -52,7 +52,7 @@ review, and test them.
   Fast-forward-ONLY (aborts on divergence; never forces) and runs the `audit-history`
   leak gate over the exact history before pushing `main` + tags. The protocol lives
   here so every trigger applies the same rails; the `.github/workflows/sync-public.yml`
-  workflow runs it **manually** (`workflow_dispatch`) with a write-scoped deploy key,
+  workflow runs it **manually** (`workflow_dispatch`) with a scoped GitHub App token,
   keeping a human on the irreversible public push.
   ```bash
   DRY_RUN=1 PUB_URL=git@github.com:OWNER/aka-claude-tools.git tools/sync-public.sh

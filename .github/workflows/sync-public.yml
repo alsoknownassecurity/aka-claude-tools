@@ -13,7 +13,7 @@ on:
         default: false
 
 permissions:
-  contents: read   # default token only READS this (dev) repo; the public push uses the deploy key
+  contents: read   # default token only READS this (dev) repo; the public push uses a scoped GitHub App token
 
 concurrency:
   group: sync-public
@@ -26,27 +26,39 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0      # full history — the leak gate walks all reachable commits
+          # Don't persist a global github.com auth header — it would override the App
+          # token on the public push (the push would run as the default bot and be denied).
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2   # the flow suite's hooks need bun
 
-      - name: Configure the public-repo deploy key (write-scoped to aka-claude-tools only)
-        env:
-          # Pass via env, not textual ${{ }} substitution into the script body.
-          PUBLIC_DEPLOY_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$PUBLIC_DEPLOY_KEY" > ~/.ssh/public_deploy
-          chmod 600 ~/.ssh/public_deploy
-          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+      # Mint a short-lived (~1h) installation token for the public repo. The token is
+      # write-scoped to aka-claude-tools alone and acts as the App's bot identity — not a
+      # person — so the App is the protect-main ruleset's bypass actor. Pinned by commit
+      # SHA (v2.2.2), not a floating tag: this step handles the App private key.
+      - name: Mint a public-repo App token
+        id: pubtoken
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ secrets.PUBLIC_SYNC_APP_ID }}
+          private-key: ${{ secrets.PUBLIC_SYNC_APP_PRIVATE_KEY }}
+          owner: alsoknownassecurity
+          repositories: aka-claude-tools
 
       - name: Gated dev→public sync
         env:
-          # SSH (deploy key) is used ONLY for the public remote; dev (origin) stays on the
-          # checkout's HTTPS token. So the deploy key can touch exactly one public repo.
-          GIT_SSH_COMMAND: "ssh -i ~/.ssh/public_deploy -o IdentitiesOnly=yes"
-          PUB_URL: git@github.com:alsoknownassecurity/aka-claude-tools.git
+          # The public push authenticates with the scoped App installation token over HTTPS
+          # (PUB_URL); the dev remote reads with the default token. Two distinct credentials,
+          # each in its own remote URL — no shared global header to cross them.
+          GH_TOKEN: ${{ github.token }}
+          PUB_URL: https://x-access-token:${{ steps.pubtoken.outputs.token }}@github.com/alsoknownassecurity/aka-claude-tools.git
           AKA_LEAK_EXTRA: ${{ secrets.AKA_LEAK_EXTRA }}
           RUN_TESTS: "1"
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-        run: bash tools/sync-public.sh
+        run: |
+          # checkout ran with persist-credentials:false, so the dev remote has no stored
+          # auth — give it a tokenized read URL for the fetch/ls-remote the gate does. The
+          # public remote keeps the App token from PUB_URL, so the push authenticates as the App.
+          git remote set-url "${DEV_REMOTE:-origin}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          bash tools/sync-public.sh
